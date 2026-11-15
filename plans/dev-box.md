@@ -30,7 +30,7 @@ it and, with the network open, send it out.
   `exec` get no token.
 - `shell` users who start `claude` by hand get the existing "not logged in" path. Its message
   points at `claude-pod claude`.
-- README "Login", `AUTH_HELP` in [src/commands/auth.js](../src/commands/auth.js) and
+- `docs/REFERENCE.md` "Login", `AUTH_HELP` in [src/commands/auth.js](../src/commands/auth.js) and
   `claude-pod guide`: say which commands carry the token.
 - Test: `buildRunArgs` is pure, but the token is written by `launch()`. Assert on the env-file
   content for an `exec` launch against the fake docker in [test/helpers.js](../test/helpers.js).
@@ -47,12 +47,12 @@ The pod can rewrite `.githooks/pre-commit`, and the host runs it on the next com
 - If it resolves inside the project, lock it like `.git/hooks`: a read-only dir, created if
   missing. If it is a symlink or resolves outside the project, refuse to start, as the other
   locked paths already do.
-- README "Project files that would run on your host": add the row.
+- `docs/REFERENCE.md` "Project files that would run on your host": add the row.
 
 ## Batch 2 — `readOnly` paths in the config
 
 Project scripts the host runs (`scripts/deploy.sh`, `package.json` scripts, `Makefile`) are
-pod-writable today. The README lists that under "What is still exposed". Let the project name
+pod-writable today. `docs/REFERENCE.md` lists that under "What is still exposed". Let the project name
 more paths to lock:
 
 ```json
@@ -96,7 +96,7 @@ downloads it on every launch, and every `pnpm install` downloads everything agai
   to folders under it.
 - It is pod-writable, so a pod can poison it, but only for later pods of the same project, which
   already share the working tree. Nothing on the host reads it.
-- README "Side effects": mention it, and that `claude-pod uninstall` removes it.
+- `docs/REFERENCE.md` "Side effects outside the project folder": mention it, and that `claude-pod uninstall` removes it.
 
 ## Batch 5 — secrets from the host keychain
 
@@ -177,7 +177,7 @@ INTEGRATION.md gets a section "Run the whole dev loop in a pod". It covers:
 - the shims `PATH` line;
 - a dev script that brings up compose on the host and then runs `claude-pod exec` for the app.
 
-The README's security model gains rows for the new protections and loses "Everything else in the
+The security model in `docs/REFERENCE.md` (and the README's short "What it does and doesn't protect") gains rows for the new protections and loses "Everything else in the
 project" from "still exposed" for the paths a project now locks.
 
 ## Later, not in this plan
