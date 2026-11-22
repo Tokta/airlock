@@ -49,7 +49,7 @@ The pod can rewrite `.githooks/pre-commit`, and the host runs it on the next com
   locked paths already do.
 - `docs/REFERENCE.md` "Project files that would run on your host": add the row.
 
-## Batch 2 — `readOnly` paths in the config
+## [DONE] Batch 2 — `readOnly` paths in the config
 
 Project scripts the host runs (`scripts/deploy.sh`, `package.json` scripts, `Makefile`) are
 pod-writable today. `docs/REFERENCE.md` lists that under "What is still exposed". Let the project name
@@ -68,6 +68,26 @@ more paths to lock:
   - a path that is missing joins `WATCHED`, so one a pod creates is quarantined.
 - Test in [test/protect.test.js](../test/protect.test.js): an existing file and dir are mounted
   `:ro`; a symlink is refused; a missing one a pod creates is quarantined.
+
+## Batch 2b — gaps the batch 1 and 2 reviews found (do before batch 3)
+
+- **Case-insensitive host defeats every file-type read-only mount (critical; existed before
+  batch 2).** On macOS Docker Desktop, `echo x >> .git/CONFIG` or `> .MCP.json` from a pod
+  writes the host file: a different-case name gets its own dentry in the VM, which is not the
+  mount point. Folder mounts are not affected (`.CLAUDE/x` gives EROFS). It hits `.git/config`
+  (fsmonitor → code on the host), `.git/config.worktree`, `.mcp.json`, `.envrc` and `readOnly`
+  file entries. Options: before/after integrity check (hash + size + inode, kept in the
+  host-only pending record, checked in `quarantineCreated` and `sweepRecord`; restore from a
+  host-only copy and warn), or mount the parent folder instead where that is possible. Prove the
+  fix in real Docker on macOS.
+- `[include]` in `.git/config` pointing at a pod-writable file: host git follows it, our
+  hooksPath read does not. Refuse (or warn) when an include target is inside the project.
+- Project root in a subfolder of a git repo (monorepo): the hooksPath check never runs. Look
+  upward for the repo's `.git/config`.
+- `.git/config.worktree` is locked but hooksPath is not read from it when
+  `extensions.worktreeConfig` is on.
+- Quarantine message for a missing parent folder names the folder, not the `readOnly` entry
+  under it.
 
 ## Batch 3 — fixed ports, and `exec --no-ports`
 

@@ -121,7 +121,7 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   // Quarantine what earlier runs' pods planted if their launcher never got to (see protect.js),
   // before deciding what's protected: a leftover must not pass for a file of yours.
   sweepPending(root, containerExists);
-  const { pinned, readOnly } = protectedMounts(root);
+  const { pinned, readOnly } = protectedMounts(root, config.readOnly);
 
   // Only pods that run Claude get the login token: anything in the pod can read it, and a package
   // under `exec pnpm dev` or a `shell` has no use for it.
@@ -176,7 +176,7 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   for (const { container, host } of ports) detail(`port ${container} → http://127.0.0.1:${host}`);
   if (mode === 'shell') detail(`login: none in this pod, so \`claude\` here is not logged in; use ${bold('claude-pod claude')}`);
 
-  const missingBefore = snapshotMissing(root);
+  const missingBefore = snapshotMissing(root, config.readOnly, readOnly);
   recordPending(root, name, missingBefore);
   const watchdog = spawn(process.execPath, [WATCHDOG, name, priv], { detached: true, stdio: ['pipe', 'ignore', 'ignore'] });
   watchdog.stdin.on('error', () => {});

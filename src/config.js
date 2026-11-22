@@ -3,13 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { CONFIG_FILE, sha256, trustDir } from './paths.js';
 import { parseDotenv } from './dotenv.js';
+import { readOnlyPath } from './protect.js';
 import { ensurePrivateDir, isInside, kind, readRegularFile, writeFileAtomic } from './safefs.js';
 import { CliError } from './ui.js';
 
 // SECURITY: claude-pod.config.json lives in the project, which every pod can write. So a config
 // is only honoured once you have approved its exact bytes (see isTrusted), and even then it is
 // validated to keep the pod's isolation intact: bridge-type networks only, an envFile inside the
-// project, no host environment variables, no reserved env names.
+// project, no host environment variables, no reserved env names, readOnly paths inside the project.
 
 // Walks up from `start` looking for a directory that satisfies `test`. Returns it, or null.
 function findUp(start, test) {
@@ -56,7 +57,7 @@ export function assertSafeRoot(root, { requireProject = true } = {}) {
   }
 }
 
-const KNOWN_KEYS = new Set(['network', 'ports', 'envFile', 'env', 'resources']);
+const KNOWN_KEYS = new Set(['network', 'ports', 'envFile', 'env', 'resources', 'readOnly']);
 
 // Env names the launcher sets itself, or that would change how Claude authenticates/stores state.
 const RESERVED_ENV = /^(HOME|CLAUDE_POD(_.*)?|CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_.*)$/;
@@ -116,6 +117,16 @@ function validate(raw, file) {
     }
     validateResources(r, `${file} "resources"`);
   }
+  if (raw.readOnly !== undefined) {
+    if (!Array.isArray(raw.readOnly)) throw bad('"readOnly" must be an array of paths relative to the project.');
+    const seen = new Set();
+    for (const p of raw.readOnly) {
+      const { rel, error } = readOnlyPath(p);
+      if (error) throw bad(`"readOnly" entry ${JSON.stringify(p)} ${error}.`);
+      if (seen.has(rel)) throw bad(`"readOnly" has ${rel} twice.`);
+      seen.add(rel);
+    }
+  }
   return raw;
 }
 
@@ -146,7 +157,7 @@ function readEnvFile(root, rel) {
 // Loads and resolves the project's config. With no config file, returns the empty defaults.
 // `hash` is the sha256 of the exact bytes, for the trust check.
 export function loadConfig({ root, configPath }) {
-  const empty = { network: null, ports: [], env: {}, resources: {}, file: null, hash: null, text: null };
+  const empty = { network: null, ports: [], env: {}, resources: {}, readOnly: [], file: null, hash: null, text: null };
   if (!configPath) return empty;
 
   let bytes;
@@ -169,6 +180,7 @@ export function loadConfig({ root, configPath }) {
     ports: raw.ports || [],
     env,
     resources: raw.resources || {},
+    readOnly: (raw.readOnly || []).map((p) => readOnlyPath(p).rel),
     file: configPath,
     hash: sha256(bytes),
     text: bytes.toString('utf8'),

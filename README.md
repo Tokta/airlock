@@ -40,7 +40,7 @@ To wire it into an orchestrator (permissions, Docker network, ports, env), see *
 ## What it does and doesn't protect
 
 - **Protected:** everything outside the project folder, and the host-side files a pod could use to run code on your machine later (`.git/hooks`, `.git/config`, `.claude/`, `.mcp.json`, ...) are read-only or quarantined.
-- **Not protected:** the project itself is read-write, so review the diff before running its scripts on your host. Network access is open by default, so a hostile pod could send the project, and its login token, anywhere. `"network": "none"` cuts that, but also takes Claude offline.
+- **Not protected:** the project itself is read-write, apart from paths you list under `readOnly` in the config, so review the diff before running its scripts on your host. Network access is open by default, so a hostile pod could send the project, and its login token, anywhere. `"network": "none"` cuts that, but also takes Claude offline.
 
 Details: [docs/REFERENCE.md](docs/REFERENCE.md#security-model).
 

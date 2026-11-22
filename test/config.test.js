@@ -58,6 +58,9 @@ test('loadConfig resolves env from envFile and validates', () => {
   assert.equal(config.network, 'app_default');
   assert.deepEqual(config.env, { DATABASE_URL: 'postgresql://u:secret@postgres/db' });
   assert.match(config.hash, /^[0-9a-f]{64}$/);
+  assert.deepEqual(config.readOnly, []);
+  fs.writeFileSync(configPath, JSON.stringify({ readOnly: ['./scripts/', 'package.json', 'infra//prod'] }));
+  assert.deepEqual(loadConfig({ root: dir, configPath }).readOnly, ['scripts', 'package.json', 'infra/prod']);
 
   const bad = (obj, re) => {
     fs.writeFileSync(configPath, JSON.stringify(obj));
@@ -76,6 +79,16 @@ test('loadConfig resolves env from envFile and validates', () => {
   bad({ resources: { memory: '0' } }, /memory/);
   bad({ resources: { cpus: '-1' } }, /cpus/);
   bad({ resources: { pids: 1 } }, /pids/);
+  bad({ readOnly: 'scripts' }, /"readOnly" must be an array/);
+  bad({ readOnly: [3] }, /non-empty string/);
+  bad({ readOnly: ['/etc'] }, /relative to the project/);
+  bad({ readOnly: ['~/bin'] }, /relative to the project/);
+  bad({ readOnly: ['scripts/../..'] }, /must not contain "\.\."/);
+  bad({ readOnly: ['.', './'] }, /whole project/);
+  bad({ readOnly: ['node_modules/.bin'] }, /node_modules/);
+  bad({ readOnly: ['.git/hooks'] }, /under \.git/);
+  bad({ readOnly: ['a:b'] }, /can't mount/);
+  bad({ readOnly: ['scripts', './scripts/'] }, /scripts twice/);
 
   fs.writeFileSync(path.join(path.dirname(dir), 'outside.env'), 'A=1\n');
   fs.symlinkSync(path.join(path.dirname(dir), 'outside.env'), path.join(dir, 'link.env'));

@@ -74,7 +74,8 @@ export function assertNetwork(network) {
 //   --user uid:gid                  run as the host user, so files the pod writes are yours.
 //   HOME=/home/claude-pod           a writable (ephemeral) home for that nameless user.
 //   <root> -> <root>                project at its real path: logs and stack traces read the same.
-//   <pinned…> -> same               .git as its own mount point, so it can't be swapped out.
+//   <pinned…> -> same               .git and the folders above readOnly paths, each its own mount
+//                                   point, so they can't be renamed and swapped out.
 //   <readOnly…> -> same, :ro        project files that run on the host (see protect.js).
 //   <stateDir> -> ~/.claude         this project's Claude state; also CLAUDE_CONFIG_DIR, so
 //                                   .claude.json lives there and no single-file mount is needed.

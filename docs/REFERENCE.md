@@ -83,7 +83,8 @@ It must be a project: claude-pod refuses `/`, your home directory, anything cont
     "HOST": "0.0.0.0",
     "DATABASE_URL": "postgresql://app:${POSTGRES_PASSWORD}@postgres:5432/app"
   },
-  "resources": { "pids": 4096, "memory": "4g", "cpus": 2 }
+  "resources": { "pids": 4096, "memory": "4g", "cpus": 2 },
+  "readOnly": ["scripts", "package.json", "Makefile"]
 }
 ```
 
@@ -94,6 +95,7 @@ It must be a project: claude-pod refuses `/`, your home directory, anything cont
 | `envFile` | `.env`-style file **inside the project** whose values can be used as `${VAR}` in `env`. |
 | `env` | Extra environment for the pod. `${VAR}` comes from `envFile` only — never from your host environment. Unset variables are an error; `$$` is a literal `$`. |
 | `resources` | `pids` (default 4096), `memory`, `cpus`. |
+| `readOnly` | Project files and folders your host runs, which pods must not change (see [Project files that would run on your host](#project-files-that-would-run-on-your-host)). Paths relative to the project; no `..`, nothing under `node_modules` or `.git`. |
 
 **The config must be approved.** The file lives in the project, which pods can write — so claude-pod only uses a config whose exact content you've approved. `init` approves what it creates; after any edit (yours or a pod's), run `claude-pod trust` to review and approve it. Interactive launches ask; unattended ones (`run` from an agent, no terminal) refuse to start. Approvals live in `~/.config/claude-pod/trust/`, which no pod can reach.
 
@@ -176,14 +178,17 @@ Some project files are executed or loaded by tools on your host later. A pod mus
 | `.git` itself | could be swapped for a fresh repo with its own hooks | mounted as its own mount point, so it can't be moved or replaced |
 | `.git/commondir` | redirects where git reads config and hooks | pod refuses to start if present; quarantined if created |
 | `.git` (in a non-git project) | a new repo with hooks | quarantined if created |
+| paths in the config's `readOnly` (e.g. `scripts/`, `package.json`, `Makefile`) | scripts you run on the host | read-only if present, quarantined if created (a missing folder is quarantined whole); the folders above it are mount points, so they can't be swapped either; pod refuses to start if one is a symlink or is reached through one |
 
-"Quarantined" means renamed to `<name>.claude-pod-quarantine-<timestamp>` after the run, with a warning. This also happens when the launcher is killed or crashes (the watchdog does it). If the watchdog can't run either (power loss, a harness that kills every process of the session), the next launch in that project does it before anything else — so until then the planted file is still there, and files you create yourself in that project in the meantime get quarantined too (renamed, never deleted). `claude-pod doctor` lists such interrupted runs. If any of these paths is a symlink, or resolves outside the project, the pod doesn't start: something planted it.
+"Quarantined" means renamed to `<name>.claude-pod-quarantine-<timestamp>` after the run, with a warning. This also happens when the launcher is killed or crashes (the watchdog does it). If the watchdog can't run either (power loss, a harness that kills every process of the session), the next launch in that project does it before anything else — so until then the planted file is still there, and files you create yourself in that project in the meantime get quarantined too (renamed, never deleted). `claude-pod doctor` lists such interrupted runs. The same goes for a missing `readOnly` path that you create yourself during a run (a `git pull` that adds a `Makefile`, say): it is renamed at the end too.
+
+A file in `readOnly` is mounted as it was at launch. If a host tool replaces it by writing a new file and renaming it (many editors, `npm install` on `package.json`), a running pod keeps the old version until it restarts. A pod can't change a listed `package.json` at all, so `pnpm add` fails there; leave it out if pods should add dependencies. If any of these paths is a symlink, or resolves outside the project, the pod doesn't start: something planted it.
 
 Git inside the pod still works for commits (identity comes from your global `user.name`/`user.email`), but `git config` writes to the repo fail — use `git -c key=value …` for one-off settings.
 
 ### What is still exposed
 
-- **Everything else in the project**, read-write: source, `.env`, `package.json` scripts, `Makefile`, test configs, nested folders. **Review the diff before running project scripts on your host** (`npm test`, `make`, …) — a hostile pod can put anything in them.
+- **Everything else in the project**, read-write: source, `.env`, test configs, nested folders, and `package.json` scripts, `Makefile` and the like unless you list them under `readOnly`. **Review the diff before running project scripts on your host** (`npm test`, `make`, …) — a hostile pod can put anything in them, or in the files they call.
 - **Git beyond the top-level hooks and config.** The pod can write the git index and create nested repositories in subfolders (which the index can register as submodules), and host git reads their settings too. After an unattended run, inspect with hooks and fsmonitor off until you've reviewed the changes — see [After an unattended run](../INTEGRATION.md#after-an-unattended-run).
 - **The network.** Outbound is open by default, so a pod can send the project (and the login token) anywhere. `"network": "none"` or `NET=none` cuts it, but also takes Claude offline.
 - **The login token** — see [Login](#login).
