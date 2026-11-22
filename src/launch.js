@@ -103,7 +103,7 @@ function envFileContent(env) {
 
 // Starts a pod for the project containing `cwd` and resolves to the exit code of `command`.
 //   mode           label value shown by `claude-pod ps` (shell | claude | exec | run)
-//   usesClaude     warn when there's no login token
+//   usesClaude     pass the login token (and warn when there's none); false for shell/exec
 //   publishPorts   publish the config's ports on free loopback host ports
 //   stdio          [stdin, stdout, stderr] for the docker client ('inherit' or fds)
 //   stdinText      feed this text on the pod's stdin (via a private file, never argv)
@@ -123,7 +123,9 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   sweepPending(root, containerExists);
   const { pinned, readOnly } = protectedMounts(root);
 
-  const token = readToken();
+  // Only pods that run Claude get the login token: anything in the pod can read it, and a package
+  // under `exec pnpm dev` or a `shell` has no use for it.
+  const token = usesClaude ? readToken() : null;
   if (usesClaude && !token) warn(`No login token. Run ${bold('claude-pod auth')} first.`);
 
   let ports = [];
@@ -172,6 +174,7 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   detail(`project: ${clean(root)}${configPath ? '' : ' (no claude-pod.config.json)'}`);
   if (config.network) detail(`network: ${config.network}`);
   for (const { container, host } of ports) detail(`port ${container} → http://127.0.0.1:${host}`);
+  if (mode === 'shell') detail(`login: none in this pod, so \`claude\` here is not logged in; use ${bold('claude-pod claude')}`);
 
   const missingBefore = snapshotMissing(root);
   recordPending(root, name, missingBefore);

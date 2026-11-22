@@ -16,7 +16,9 @@ not API billing). Create one on the host (opens the browser) with:
 
 then run \`claude-pod auth\` and paste it (or pipe it in: \`claude-pod auth < file\`).
 The token file is kept in ~/.config/claude-pod/oauth-token (0600), a folder no pod can see. The
-token value is handed to each pod as CLAUDE_CODE_OAUTH_TOKEN, so code inside a pod CAN read it.
+token value is handed as CLAUDE_CODE_OAUTH_TOKEN to the pods that run Claude (\`claude-pod
+claude\` and \`claude-pod run\`), so code inside those pods CAN read it. \`shell\` and \`exec\`
+pods get no token.
 It never rotates, so parallel pods can't log each other out.
 
 Options:

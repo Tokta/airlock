@@ -125,7 +125,8 @@ This is a login for **your Claude subscription** (Pro/Max), the same plan you us
 Where it lives and who can see it:
 
 - **The token file** is `~/.config/claude-pod/oauth-token` (mode 0600), in a folder that is never mounted into any pod. A pod can't read, change or replace that file.
-- **The token itself** is handed to each pod as the `CLAUDE_CODE_OAUTH_TOKEN` environment variable (through a private env-file, not the command line), because Claude inside the pod needs it to log in. So **anything running in the pod can read it** (`echo $CLAUDE_CODE_OAUTH_TOKEN`) and, with the network open, send it elsewhere — treat it like a password to your Claude plan. If you suspect a pod misbehaved, create a new one with `claude setup-token` and run `claude-pod auth`.
+- **The token itself** is handed to the pods that run Claude, `claude-pod claude` and `claude-pod run`, as the `CLAUDE_CODE_OAUTH_TOKEN` environment variable (through a private env-file, not the command line), because Claude inside the pod needs it to log in. So **anything running in those pods can read it** (`echo $CLAUDE_CODE_OAUTH_TOKEN`) and, with the network open, send it elsewhere — treat it like a password to your Claude plan. If you suspect a pod misbehaved, create a new one with `claude setup-token` and run `claude-pod auth`.
+- **`claude-pod shell` and `claude-pod exec` get no token**, so a package running under `exec pnpm dev` can't read it directly. It can still write files that a later `claude` or `run` pod of the same project loads (its `node_modules`, the pod's `~/.claude`), and code planted there runs with the token. `claude` started by hand in a shell pod is not logged in; use `claude-pod claude` instead.
 
 It doesn't refresh or rotate, so parallel pods can't log each other out — no shared credentials file, no refresh races.
 
@@ -154,7 +155,7 @@ One `docker run` (see `buildRunArgs` in [`src/docker.js`](../src/docker.js)):
 
 - the project folder, read-write, at its real path — **except** the files below, which are read-only;
 - its own project's state dir `~/.claude-pod/pods/<project>/` (sessions, Claude settings) — never another project's;
-- the login token and config env through a private env-file (not on the command line, not in the docker client's environment);
+- the login token (`claude` and `run` only) and config env through a private env-file (not on the command line, not in the docker client's environment);
 - your user's uid (`--user`), `--cap-drop=ALL`, `no-new-privileges`, `--pids-limit`, `--init`, optional memory/CPU caps;
 - outbound network (or none), and only the ports you configured, on `127.0.0.1`.
 
@@ -166,6 +167,8 @@ Some project files are executed or loaded by tools on your host later. A pod mus
 |---|---|---|
 | `.git/hooks/` | run by git on commit/push | read-only (created if missing) |
 | `.git/config` | `core.fsmonitor` runs on `git status`; hooksPath, filters, aliases | read-only |
+| `.git/config.worktree` | overrides `.git/config` once `git sparse-checkout` turns `extensions.worktreeConfig` on | read-only if present; quarantined if created |
+| the folder `core.hooksPath` names (e.g. `.githooks/`) | run by git on commit/push instead of `.git/hooks/` | read-only (created if missing); pod refuses to start if it is a symlink, outside the project, or the project itself. Only that folder is locked: a hook that calls other project files (husky's `.husky/_` stubs run `.husky/<hook>`) still runs whatever the pod wrote there |
 | `.claude/` | settings, hooks, agents of the Claude session orchestrating from the host | read-only (created if missing) |
 | `.mcp.json` | MCP servers started by host Claude | read-only if present, quarantined if a pod creates it |
 | `.envrc` | run by direnv on `cd` | read-only if present, quarantined if created |

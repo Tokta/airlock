@@ -18,7 +18,7 @@ typed it or the host Claude session did, with the same protections the agent pod
 The guard is there to stop accidents and narrow what a package can reach. Someone who calls
 `/usr/local/bin/node` by its full path on the host gets past it; that is accepted.
 
-## Batch 1 — two security gaps (do first; both stand on their own)
+## [DONE] Batch 1 — two security gaps (do first; both stand on their own)
 
 ### The login token reaches only pods that run Claude
 

@@ -54,7 +54,7 @@ the sub-agent's own errors (e.g. "Not logged in", 401) are in .err.
 | You see (in .err or on stderr) | Meaning | Do this |
 |---|---|---|
 | "…config.json is new or has changed since you approved it" | the project config needs human approval | STOP. Tell the user to review it and run \`claude-pod trust\`. Never approve it yourself. |
-| "No login token" / "Not logged in" / 401 | no or invalid login | Tell the user to run \`claude setup-token\` then \`claude-pod auth\`. |
+| "No login token" / "Not logged in" / 401 | no or invalid login, or \`claude\` was started inside an \`exec\`/\`shell\` pod (they get no token) | Use \`claude-pod run\` for sub-agents. Otherwise tell the user to run \`claude setup-token\` then \`claude-pod auth\`. |
 | "Image 'claude-pod' not found" / "not the one claude-pod built" | image missing or replaced | Tell the user to run \`claude-pod build\`. |
 | "Docker daemon is not running" / "network … not found" | Docker or the app stack is down | Tell the user (e.g. start Docker, \`docker compose up -d\`). |
 | "--prompt-file/--out … outside the allowed folders" / "inside the project" | path rule | Move the file to your scratchpad (temp dir). |
@@ -68,10 +68,13 @@ the sub-agent's own errors (e.g. "Not logged in", 401) are in .err.
 - Can: read and write the project, run its tools (node, pnpm, git, gh, jq, curl), reach the
   internet, reach the app's services if the project config joins a Docker network.
 - Cannot: see anything outside the project (home dir, SSH keys, other repos), push to git
-  or use GitHub credentials (none are present), change .git/hooks, .git/config, .claude/,
-  .mcp.json, .envrc, .vscode/, .idea/ (read-only). Files like these that it creates are
-  quarantined after the run. \`git config\` on the repo fails (\`--global\` only affects the
-  pod); \`git commit\` works with the user's global identity; use \`git -c key=value …\`.
+  or use GitHub credentials (none are present), change .git/hooks, the core.hooksPath
+  folder, .git/config, .claude/, .mcp.json, .envrc, .vscode/, .idea/ (read-only). Files like
+  these that it creates are quarantined after the run. \`git config\` on the repo fails
+  (\`--global\` only affects the pod); \`git commit\` works with the user's global identity;
+  use \`git -c key=value …\`.
+- The login token is in \`run\` and \`claude\` pods only (code there can read it);
+  \`claude-pod exec\` and \`shell\` pods have none, so \`claude\` inside them is not logged in.
 - Detect the pod from inside with \`[ "$CLAUDE_POD" = 1 ]\`.
 
 ## Never

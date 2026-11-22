@@ -42,6 +42,34 @@ test('run: prompt on stdin, output files, exit code, token only in the env-file'
   }
 });
 
+test('login token: only claude and run pods get it; shell and exec do not', async () => {
+  const s = ready();
+  const exec = await cli(['exec', 'pnpm', 'dev'], { cwd: s.project, env: s.env });
+  assert.equal(exec.code, 0, exec.stderr);
+  const shell = await cli(['shell'], { cwd: s.project, env: s.env });
+  assert.equal(shell.code, 0, shell.stderr);
+  assert.match(shell.stderr, /not logged in; use claude-pod claude/);
+  const claude = await cli(['claude', '--version'], { cwd: s.project, env: s.env });
+  assert.equal(claude.code, 0, claude.stderr);
+  assert.doesNotMatch(exec.stderr + shell.stderr + claude.stderr, /No login token/);
+
+  const [execRun, shellRun, claudeRun] = s.runs();
+  for (const { envFile } of [execRun, shellRun]) {
+    assert.doesNotMatch(envFile, /CLAUDE_CODE_OAUTH_TOKEN/);
+    assert.ok(!envFile.includes(TOKEN));
+  }
+  assert.match(claudeRun.envFile, new RegExp(`^CLAUDE_CODE_OAUTH_TOKEN=${TOKEN}$`, 'm'));
+});
+
+test('the core.hooksPath folder is mounted read-only', async () => {
+  const s = ready();
+  fs.writeFileSync(path.join(s.project, '.git', 'config'), '[core]\n\thooksPath = .githooks\n');
+  const res = await cli(['exec', 'true'], { cwd: s.project, env: s.env });
+  assert.equal(res.code, 0, res.stderr);
+  const p = path.join(s.project, '.githooks');
+  assert.ok(s.runs()[0].args.includes(`${p}:${p}:ro`));
+});
+
 test('run --prompt goes over stdin, not argv', async () => {
   const s = ready();
   const res = await cli(['run', '--prompt', 'secret plan'], { cwd: s.project, env: s.env });
