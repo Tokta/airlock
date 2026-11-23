@@ -82,6 +82,21 @@ export function validateResources(r, where) {
   if (r.cpus !== undefined && !CPUS_RE.test(String(r.cpus))) throw bad('cpus must be a positive number, e.g. 2 or 0.5.');
 }
 
+const isPort = (p) => Number.isInteger(p) && p >= 1 && p <= 65535;
+
+// A "ports" entry is a container port (published on a free host port), or
+// {"port": 3000, "fixed": true} for a dev server that must keep its real port: OAuth callbacks,
+// auth base URLs and cookies are set to it. Returns { port, fixed } or { error }.
+function portEntry(p) {
+  if (typeof p === 'number') return isPort(p) ? { port: p, fixed: false } : { error: 'is not a port number (1-65535)' };
+  if (p === null || typeof p !== 'object' || Array.isArray(p)) return { error: 'must be a port number or {"port": N, "fixed": true}' };
+  const extra = Object.keys(p).find((k) => k !== 'port' && k !== 'fixed');
+  if (extra) return { error: `has unknown key "${extra}"` };
+  if (!isPort(p.port)) return { error: 'needs "port": a port number (1-65535)' };
+  if (p.fixed !== undefined && typeof p.fixed !== 'boolean') return { error: 'has a "fixed" that is not true or false' };
+  return { port: p.port, fixed: p.fixed === true };
+}
+
 function validate(raw, file) {
   const bad = (msg) => new CliError(`${file}: ${msg}`);
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw bad('must be a JSON object.');
@@ -94,11 +109,14 @@ function validate(raw, file) {
     }
   }
   if (raw.ports !== undefined) {
-    if (!Array.isArray(raw.ports)) throw bad('"ports" must be an array of container port numbers.');
+    if (!Array.isArray(raw.ports)) throw bad('"ports" must be an array of container ports.');
+    const seen = new Set();
     for (const p of raw.ports) {
-      if (!Number.isInteger(p) || p < 1 || p > 65535) throw bad(`"ports" entry ${JSON.stringify(p)} is not a port number (1-65535).`);
+      const { port, error } = portEntry(p);
+      if (error) throw bad(`"ports" entry ${JSON.stringify(p)} ${error}.`);
+      if (seen.has(port)) throw bad(`"ports" has ${port} twice.`);
+      seen.add(port);
     }
-    if (new Set(raw.ports).size !== raw.ports.length) throw bad('"ports" has duplicates.');
   }
   if (raw.envFile !== undefined && (typeof raw.envFile !== 'string' || !raw.envFile || path.isAbsolute(raw.envFile))) {
     throw bad('"envFile" must be a path relative to the project.');
@@ -179,7 +197,7 @@ export function loadConfig({ root, configPath }) {
 
   return {
     network: raw.network || null,
-    ports: raw.ports || [],
+    ports: (raw.ports || []).map(portEntry),
     env,
     resources: raw.resources || {},
     readOnly: (raw.readOnly || []).map((p) => readOnlyPath(p).rel),

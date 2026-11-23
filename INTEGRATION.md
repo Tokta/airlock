@@ -45,7 +45,10 @@ claude-pod trust     # shows the file, asks y/N
   never from your shell environment. An unset variable is an error, so a missing secret fails at
   launch rather than as a DB error.
 - **`ports`** — container ports; each gets a free `127.0.0.1` host port per pod (printed at launch,
-  and available in the pod as `CLAUDE_POD_PORT_<port>`).
+  and available in the pod as `CLAUDE_POD_PORT_<port>`). A dev server whose OAuth callbacks or
+  cookies need its real port uses `{"port": 3000, "fixed": true}` instead: `exec` and `shell`
+  publish it on `127.0.0.1:3000` and refuse to start while 3000 is busy; agent pods get a free
+  port for it ([Ports](docs/REFERENCE.md#ports)).
 
 Commit the config — it holds no secrets, only references to them. Check with `claude-pod doctor`.
 

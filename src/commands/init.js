@@ -12,7 +12,9 @@ Creates ${CONFIG_FILE} at the project root (the git root, or the current folder)
 trusted. Keys:
   network    Docker bridge network to join, e.g. "<compose-project>_default", so the pod reaches
              services by name (postgres:5432). "none" cuts networking. "host" is not allowed.
-  ports      container ports to publish on free 127.0.0.1 ports, e.g. [3000, 3131]
+  ports      container ports to publish on free 127.0.0.1 ports, e.g. [3000, 3131];
+             {"port": 3000, "fixed": true}: exec and shell pods publish 127.0.0.1:3000 itself and
+             refuse to start if it is in use; agent pods get a free port for it
   envFile    .env-style file inside the project whose values can be used as \${VAR} in "env"
   env        extra environment for the pod, e.g. {"DATABASE_URL": "postgresql://u:\${PW}@postgres/db"}
              (\${VAR} comes from envFile only, never from your host environment)

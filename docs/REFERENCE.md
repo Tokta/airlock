@@ -31,9 +31,9 @@ claude-pod doctor                     # checks everything
 
 | Command | What it does |
 |---|---|
-| `claude-pod` / `claude-pod shell` | bash shell in the pod |
+| `claude-pod` / `claude-pod shell [--no-ports]` | bash shell in the pod |
 | `claude-pod claude [args…]` | Claude in the pod; args passed through unchanged |
-| `claude-pod exec <cmd> [args…]` | any command in the pod, e.g. `claude-pod exec pnpm test` |
+| `claude-pod exec [--no-ports] <cmd> [args…]` | any command in the pod, e.g. `claude-pod exec pnpm dev`; `--no-ports` for commands that serve nothing (`exec --no-ports pnpm test`) |
 | `claude-pod run …` | headless Claude task with `--print --dangerously-skip-permissions` (below) |
 | `claude-pod build [--claude-version V]` | build or rebuild the image |
 | `claude-pod auth [--from-env] [--remove]` | store the login token from `claude setup-token` |
@@ -91,7 +91,7 @@ It must be a project: claude-pod refuses `/`, your home directory, anything cont
 | Key | Meaning |
 |---|---|
 | `network` | Docker **bridge** network to join so the pod reaches services by name (`postgres:5432`). `"none"` cuts all networking. `host`, `container:…` and non-bridge drivers are refused. |
-| `ports` | Container ports to publish on **free** `127.0.0.1` host ports (see [Ports](#ports)). |
+| `ports` | Container ports to publish on **free** `127.0.0.1` host ports, or `{"port": 3000, "fixed": true}` to keep the real port (see [Ports](#ports)). |
 | `envFile` | `.env`-style file **inside the project** whose values can be used as `${VAR}` in `env`. |
 | `env` | Extra environment for the pod. `${VAR}` comes from `envFile` only — never from your host environment. Unset variables are an error; `$$` is a literal `$`. |
 | `resources` | `pids` (default 4096), `memory`, `cpus`. |
@@ -109,7 +109,18 @@ Each port in `ports` is published on a free host port chosen at launch, bound to
   port 3131 → http://127.0.0.1:52342
 ```
 
-Inside the pod, `CLAUDE_POD_PORT_3000=52341` etc. tell your app its host-side URL. There are no clashes with a dev server on your host or with other pods. `shell`, `claude` and `exec` publish ports; `run` doesn't unless you pass `--ports`. `claude-pod ps` shows the mappings.
+Inside the pod, `CLAUDE_POD_PORT_3000=52341` etc. tell your app its host-side URL. These ports never clash with a dev server on your host or with other pods. `shell`, `claude` and `exec` publish ports; `run` doesn't unless you pass `--ports`, and `shell --no-ports` and `exec --no-ports` publish none. `claude-pod ps` shows the mappings.
+
+**Fixed ports.** A dev server often needs its real port, because OAuth callbacks, auth base URLs and cookies are set to it. Mark it fixed:
+
+```json
+{ "ports": [{ "port": 3000, "fixed": true }, 3131] }
+```
+
+- **`exec` and `shell`** publish it on `127.0.0.1:3000` itself, with `CLAUDE_POD_PORT_3000=3000`. It is never moved to another port. If 3000 is taken (something answers on `127.0.0.1` or `::1`, or holds it, including another pod), the pod refuses to start: `port 3000 is in use — is the dev server already running?`. Two pods started at the same instant can both pass that check; the second then fails in `docker run` with "ports are not available".
+- **`claude` and `run --ports`** publish it on a free host port, like any other entry. So an agent pod's own server never takes the real port, where it would receive OAuth redirects meant for your app and could register a service worker that outlives the pod. This does not keep agent-written code off that origin: the dev server serves whatever is in the project, including files an agent changed or added.
+
+Use `claude-pod exec --no-ports pnpm test` (or `shell --no-ports`) for anything that serves nothing, so it can run beside `pnpm dev`.
 
 > **Bind dev servers to `0.0.0.0` inside the pod**, not `localhost` (e.g. `"HOST": "0.0.0.0"` in `env`, `vite --host`, `next dev -H 0.0.0.0`). The host side stays `127.0.0.1`-only, so this doesn't expose anything to your LAN.
 

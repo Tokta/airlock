@@ -1,6 +1,7 @@
 // End-to-end tests of the CLI against a fake docker (test/fixtures/fake-docker.js).
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { test } from 'node:test';
 import { dockerfileHash } from '../src/docker.js';
@@ -129,6 +130,101 @@ test('config: untrusted is refused unattended; trusted env reaches the pod via e
   // Any edit — by you or a pod — needs approving again.
   fs.appendFileSync(path.join(s.project, 'claude-pod.config.json'), ' ');
   assert.equal((await cli(['exec', 'true'], { cwd: s.project, env: s.env })).code, 1);
+});
+
+// A port that is free right now, for a fixed-port config.
+async function freeLoopbackPort() {
+  const srv = net.createServer();
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  const { port } = srv.address();
+  await new Promise((resolve) => srv.close(resolve));
+  return port;
+}
+
+test('ports: a fixed port is published as itself; a busy one refuses; exec --no-ports publishes none', async () => {
+  const s = ready();
+  const fixed = await freeLoopbackPort();
+  fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), JSON.stringify({ ports: [{ port: fixed, fixed: true }, 3131] }));
+  await trustConfig(s);
+
+  const res = await cli(['exec', 'pnpm', 'dev'], { cwd: s.project, env: s.env });
+  assert.equal(res.code, 0, res.stderr);
+  assert.match(res.stderr, new RegExp(`port ${fixed} → http://127\\.0\\.0\\.1:${fixed}\\b`));
+  let { args } = s.runs()[0];
+  const published = args.filter((_, i) => args[i - 1] === '-p');
+  assert.equal(published[0], `127.0.0.1:${fixed}:${fixed}`);
+  assert.match(published[1], /^127\.0\.0\.1:\d+:3131$/);
+  assert.ok(args.includes(`CLAUDE_POD_PORT_${fixed}=${fixed}`));
+
+  // Something already serves the fixed port: no pod, and no fallback to another port.
+  const srv = net.createServer();
+  await new Promise((resolve) => srv.listen(fixed, '127.0.0.1', resolve));
+  try {
+    const busy = await cli(['exec', 'pnpm', 'dev'], { cwd: s.project, env: s.env });
+    assert.equal(busy.code, 1);
+    assert.match(busy.stderr, new RegExp(`port ${fixed} is in use — is the dev server already running\\?`));
+    assert.equal(s.runs().length, 1, 'docker run never called');
+
+    // --no-ports starts beside it: nothing published, no CLAUDE_POD_PORT_*.
+    const test = await cli(['exec', '--no-ports', 'pnpm', 'test', '--no-ports'], { cwd: s.project, env: s.env });
+    assert.equal(test.code, 0, test.stderr);
+    ({ args } = s.runs()[1]);
+    assert.ok(!args.includes('-p'));
+    assert.ok(!args.some((a) => a.startsWith('CLAUDE_POD_PORT_')));
+    assert.deepEqual(args.slice(args.indexOf('claude-pod') + 1), ['pnpm', 'test', '--no-ports'], 'flags after the command are passed through');
+
+    // An agent pod starts beside it on a random port for that entry: agents never own the real origin.
+    const claude = await cli(['claude', '--version'], { cwd: s.project, env: s.env });
+    assert.equal(claude.code, 0, claude.stderr);
+    ({ args } = s.runs()[2]);
+    const pub = args.filter((_, i) => args[i - 1] === '-p');
+    assert.equal(pub.length, 2);
+    assert.match(pub[0], new RegExp(`^127\\.0\\.0\\.1:\\d+:${fixed}$`));
+    assert.notEqual(pub[0], `127.0.0.1:${fixed}:${fixed}`);
+    assert.ok(!args.includes(`CLAUDE_POD_PORT_${fixed}=${fixed}`));
+
+    // So does run --ports.
+    const run = await cli(['run', '--ports', '--prompt', 'hi'], { cwd: s.project, env: s.env });
+    assert.equal(run.code, 0, run.stderr);
+    ({ args } = s.runs()[3]);
+    assert.ok(!args.includes(`127.0.0.1:${fixed}:${fixed}`));
+    assert.equal(args.filter((a) => a === '-p').length, 2);
+
+    // A shell is a dev-server path: it refuses like exec, unless --no-ports.
+    const shell = await cli(['shell'], { cwd: s.project, env: s.env });
+    assert.equal(shell.code, 1);
+    assert.match(shell.stderr, /is in use/);
+    assert.match(shell.stderr, /claude-pod shell --no-ports/);
+    const quiet = await cli(['shell', '--no-ports'], { cwd: s.project, env: s.env });
+    assert.equal(quiet.code, 0, quiet.stderr);
+    assert.ok(!s.runs()[4].args.includes('-p'));
+    assert.equal((await cli(['shell', '--ports'], { cwd: s.project, env: s.env })).code, 1);
+
+    // With no network nothing is published, so a busy fixed port doesn't matter.
+    const offline = await cli(['exec', 'true'], { cwd: s.project, env: { ...s.env, NET: 'none' } });
+    assert.equal(offline.code, 0, offline.stderr);
+    assert.ok(!s.runs()[5].args.includes('-p'));
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+});
+
+test('exec options: unknown ones are refused, "--" ends them', async () => {
+  const s = ready();
+  const unknown = await cli(['exec', '--ports', 'pnpm'], { cwd: s.project, env: s.env });
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.stderr, /Unknown exec option "--ports"/);
+  assert.equal((await cli(['exec', '--no-ports'], { cwd: s.project, env: s.env })).code, 1);
+  assert.equal((await cli(['exec', '--no-ports', '--'], { cwd: s.project, env: s.env })).code, 1);
+  const help = await cli(['exec', '--help'], { cwd: s.project, env: s.env });
+  assert.equal(help.code, 0);
+  assert.match(help.stdout, /--no-ports/);
+  assert.equal(s.runs().length, 0);
+
+  const dashed = await cli(['exec', '--no-ports', '--', '-odd', 'x'], { cwd: s.project, env: s.env });
+  assert.equal(dashed.code, 0, dashed.stderr);
+  const { args } = s.runs()[0];
+  assert.deepEqual(args.slice(args.indexOf('claude-pod') + 1), ['-odd', 'x']);
 });
 
 test('run --out prints exit= even when the launcher fails', async () => {

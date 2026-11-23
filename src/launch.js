@@ -104,10 +104,11 @@ function envFileContent(env) {
 // Starts a pod for the project containing `cwd` and resolves to the exit code of `command`.
 //   mode           label value shown by `claude-pod ps` (shell | claude | exec | run)
 //   usesClaude     pass the login token (and warn when there's none); false for shell/exec
-//   publishPorts   publish the config's ports on free loopback host ports
+//   publishPorts   publish the config's ports on loopback (fixed ones on their own number)
+//   ownFixedPorts  publish fixed ports as themselves (exec, shell); agent pods get random ones
 //   stdio          [stdin, stdout, stderr] for the docker client ('inherit' or fds)
 //   stdinText      feed this text on the pod's stdin (via a private file, never argv)
-export async function launch({ mode, command, cwd = process.cwd(), usesClaude, publishPorts, stdio = 'inherit', stdinText = null }) {
+export async function launch({ mode, command, cwd = process.cwd(), usesClaude, publishPorts, ownFixedPorts = false, stdio = 'inherit', stdinText = null }) {
   const { root, configPath } = findProjectRoot(cwd);
   assertSafeRoot(root);
   const config = applyEnvOverrides(loadConfig({ root, configPath }));
@@ -131,7 +132,7 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   let ports = [];
   if (publishPorts && config.ports.length) {
     if (config.network === 'none') warn('Network is "none": not publishing any ports.');
-    else ports = await allocatePorts(config.ports);
+    else ports = await allocatePorts(config.ports, { ownFixed: ownFixedPorts, busyHint: `claude-pod ${mode} --no-ports` });
   }
 
   const name = podName(root);

@@ -85,7 +85,10 @@ export async function doctor(argv) {
         else if (res.stdout.trim() !== 'bridge') fail(`network ${config.network} uses the '${res.stdout.trim()}' driver; only bridge is allowed`);
         else ok(`network ${config.network} exists (bridge)`);
       }
-      if (config.ports.length) ok(`ports: ${config.ports.join(', ')} (published on free host ports)`);
+      if (config.ports.length) {
+        const list = config.ports.map((p) => `${p.port} → ${p.fixed ? `127.0.0.1:${p.port} (fixed)` : 'a free host port'}`);
+        ok(`ports: ${list.join(', ')}`);
+      }
       if (Object.keys(config.env).length) ok(`env: ${Object.keys(config.env).join(', ')}`);
     }
   } catch (e) {

@@ -59,6 +59,11 @@ test('loadConfig resolves env from envFile and validates', () => {
   assert.deepEqual(config.env, { DATABASE_URL: 'postgresql://u:secret@postgres/db' });
   assert.match(config.hash, /^[0-9a-f]{64}$/);
   assert.deepEqual(config.readOnly, []);
+  assert.deepEqual(config.ports, [{ port: 3000, fixed: false }, { port: 3131, fixed: false }]);
+  fs.writeFileSync(configPath, JSON.stringify({ ports: [{ port: 3000, fixed: true }, 3131, { port: 8080 }, { port: 9000, fixed: false }] }));
+  assert.deepEqual(loadConfig({ root: dir, configPath }).ports, [
+    { port: 3000, fixed: true }, { port: 3131, fixed: false }, { port: 8080, fixed: false }, { port: 9000, fixed: false },
+  ]);
   fs.writeFileSync(configPath, JSON.stringify({ readOnly: ['./scripts/', 'package.json', 'infra//prod'] }));
   assert.deepEqual(loadConfig({ root: dir, configPath }).readOnly, ['scripts', 'package.json', 'infra/prod']);
 
@@ -70,7 +75,15 @@ test('loadConfig resolves env from envFile and validates', () => {
   bad({ network: 'host' }, /bridge network/);
   bad({ network: 'container:db' }, /bridge network/);
   bad({ ports: [0] }, /not a port number/);
-  bad({ ports: [80, 80] }, /duplicates/);
+  bad({ ports: [80, 80] }, /80 twice/);
+  bad({ ports: [80, { port: 80, fixed: true }] }, /80 twice/);
+  bad({ ports: [{ port: 3000, fixed: 'yes' }] }, /"fixed" that is not true or false/);
+  bad({ ports: [{ port: 0, fixed: true }] }, /needs "port"/);
+  bad({ ports: [{ fixed: true }] }, /needs "port"/);
+  bad({ ports: [{ port: 3000, host: 80 }] }, /unknown key "host"/);
+  bad({ ports: ['3000'] }, /must be a port number or/);
+  bad({ ports: [null] }, /must be a port number or/);
+  bad({ ports: 3000 }, /must be an array/);
   bad({ env: { 'A-B': 'x' } }, /not a valid variable name/);
   bad({ env: { CLAUDE_CODE_OAUTH_TOKEN: 'x' } }, /reserved/);
   bad({ env: { HOME: 'x' } }, /reserved/);

@@ -93,7 +93,7 @@ more paths to lock:
 - Quarantine message for a missing parent folder names the folder, not the `readOnly` entry
   under it.
 
-## Batch 3 — fixed ports, and `exec --no-ports`
+## [DONE] Batch 3 — fixed ports, and `exec --no-ports`
 
 Agents want random free ports so parallel pods never clash. A dev server usually needs its real
 port, because OAuth callbacks, auth base URLs and cookies are set to it.
@@ -105,6 +105,11 @@ port, because OAuth callbacks, auth base URLs and cookies are set to it.
 - `exec --no-ports`: no ports published at all. The shims (batch 6) always use it, so
   `pnpm test` beside a running `pnpm dev` never fights over 3000.
 - `CLAUDE_POD_PORT_<n>` stays as it is (equal to `n` for a fixed port).
+- **Chosen (with the user, after review):** only the dev-server paths, `exec` and `shell`, publish
+  a fixed port as itself and refuse when it is busy. `claude` and `run --ports` publish it on a
+  random port, so a hostile agent's own server never takes the real origin (OAuth redirects,
+  service workers). `shell --no-ports` exists too. A busy check counts a listener on 127.0.0.1 or
+  ::1, or a held port; EACCES below 1024 is left to Docker.
 - Tests: [test/config.test.js](../test/config.test.js) for the new shape;
   [src/ports.js](../src/ports.js) maps fixed ports without probing, and a busy fixed port
   throws.
