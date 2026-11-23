@@ -172,7 +172,23 @@ and every host process can read. Let the launcher fetch them at start-up instead
   plainly what this doesn't do: an agent pod can change what a later `exec` runs with the keys,
   and any host process running as you can read them.
 
-## Batch 6 — host shims: package commands go to the pod
+## [DONE] Batch 6 — host shims: package commands go to the pod
+
+**As built:** [src/shim.js](../src/shim.js), [src/commands/shims.js](../src/commands/shims.js),
+tests in [test/shims.test.js](../test/shims.test.js). It differs from the plan below in these ways, after two reviews in real
+Docker and the user's decisions:
+- `node <file>` is routed by where the file is. It goes to the pod when the file is pod-writable in an opted-in project:
+  every symlink on the way is checked, and `readOnly` counts only if every running pod has it too. Global CLIs,
+  claude-pod and locked scripts run on the host, with the real path that was checked.
+- claude-pod runs `shims.host` scripts itself, from a `readOnly` root `package.json`, with `/bin/sh` and no host pnpm
+  or npm. `npm start/stop/test` count as scripts too.
+- Shim pods get no keychain secrets and print no banner. They launch in-process.
+- The opt-in is sticky in the trust record. `init` won't end it, `--forget` needs a terminal and the config to be gone,
+  and `trust` warns before turning the shims off (for a nested config too).
+- The launchers use the absolute node that wrote them and skip relative PATH entries and the shims folder under any
+  spelling. They give host children the shims back, and keep IPC fds.
+- Known costs: about 0.1 s for each `node` that a host pnpm or npm starts. Content a pod wrote to a newly-`readOnly`
+  file before its run ended is trusted once that pod exits (documented).
 
 So that nobody has to remember `claude-pod exec`, in a person's terminal or in the host Claude
 session (which uses the same `PATH`):

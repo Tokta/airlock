@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig } from '../config.js';
@@ -7,12 +8,23 @@ import { IMAGE, hostDir, projectStateDir, stateRoot, tokenPath } from '../paths.
 import { containerExists } from '../launch.js';
 import { hasSecret, supported } from '../keychain.js';
 import { listOrphans } from '../protect.js';
+import { SHIM_TOOLS, shimsDir } from '../shim.js';
 import { kind } from '../safefs.js';
 import { bold, err, info, ok, warn } from '../ui.js';
 
 export const DOCTOR_HELP = `Usage: claude-pod doctor
 
 Checks Docker, the image, the login token and the current project's config.`;
+
+const isExecutable = (p) => {
+  try {
+    fs.accessSync(p, fs.constants.X_OK);
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+};
+const PATH_ENTRIES = () => (process.env.PATH || '').split(path.delimiter).map((d) => d.replace(/\/+$/, ''));
 
 export async function doctor(argv) {
   const { values } = parseArgs({ args: argv, options: { help: { type: 'boolean', short: 'h' } } });
@@ -68,6 +80,18 @@ export async function doctor(argv) {
     }
   }
 
+  // Shims only work ahead of the real binaries on PATH: a pnpm found first runs on the host.
+  if (kind(shimsDir()) === 'dir') {
+    info('Shims');
+    const entries = PATH_ENTRIES();
+    const at = entries.indexOf(shimsDir());
+    const fix = `put \`export PATH="${shimsDir()}:$PATH"\` last in your shell rc`;
+    const before = at === -1 ? [] : entries.slice(0, at).flatMap((d) => SHIM_TOOLS.filter((t) => isExecutable(path.join(d, t))).map((t) => path.join(d, t)));
+    if (at === -1) warn(`shims in ${shimsDir()} are not on PATH — ${fix}`);
+    else if (before.length) warn(`shims are on PATH after ${before.join(', ')}, which run${before.length === 1 ? 's' : ''} on the host — ${fix}`);
+    else ok(`shims on PATH ahead of the real ${SHIM_TOOLS.join('/')} (${shimsDir()})`);
+  }
+
   info('Project');
   try {
     const found = findProjectRoot();
@@ -91,6 +115,14 @@ export async function doctor(argv) {
         ok(`ports: ${list.join(', ')}`);
       }
       if (Object.keys(config.env).length) ok(`env: ${Object.keys(config.env).join(', ')}`);
+      if (config.shims) {
+        ok(`shims: on${config.shims.host.length ? `; on the host: ${config.shims.host.join(', ')}` : ''}`);
+        if (kind(shimsDir()) !== 'dir') warn(`shims: not installed — run ${bold('claude-pod shims')}`);
+        // A host script is defined in package.json, which a pod could otherwise rewrite.
+        if (config.shims.host.length && !config.readOnly.some((p) => p.toLowerCase() === 'package.json')) {
+          warn('shims.host scripts are refused until "package.json" is in "readOnly" (add the files they call too)');
+        }
+      }
       if (config.secrets.length) {
         if (!supported()) warn('secrets: keychain secrets are macOS-only for now; pods start without them');
         else if (!isTrusted(found.root, config.hash)) warn('secrets: not checked until the config is trusted');

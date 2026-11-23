@@ -73,5 +73,6 @@ export async function uninstall(argv) {
     }
   }
   process.stderr.write(`  To remove the command too: ${bold('npm uninstall -g claude-pod')}\n`);
+  process.stderr.write('  If you put ~/.config/claude-pod/shims on PATH in your shell rc, remove that line.\n');
   return 0;
 }

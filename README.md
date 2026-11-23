@@ -40,6 +40,7 @@ To wire it into an orchestrator (permissions, Docker network, ports, env), see *
 ## What it does and doesn't protect
 
 - **Protected:** everything outside the project folder, and the host-side files a pod could use to run code on your machine later (`.git/hooks`, `.git/config`, `.claude/`, `.mcp.json`, ...) are read-only or quarantined. On macOS those files are also made immutable while a pod runs, so host edits to them (`git push -u`, `git config`) fail until it exits.
+- **Opt-in for the dev loop:** with `claude-pod shims` on your `PATH`, `pnpm`, `npm`, `node` & co. typed on the host run in a pod in projects whose config has `shims`, except the scripts you list for the host and `node` files no pod can write. A command run by its full path, or a global CLI, still runs on the host.
 - **Not protected:** the project itself is read-write, apart from paths you list under `readOnly` in the config, so review the diff before running its scripts on your host. Network access is open by default, so a hostile pod could send the project, and its login token, anywhere. API keys kept with `claude-pod secret` reach only `shell` and `exec` pods, not Claude's own pods, but an agent can still change the code an `exec` pod later runs with them. `"network": "none"` cuts that, but also takes Claude offline.
 
 Details: [docs/REFERENCE.md](docs/REFERENCE.md#security-model).

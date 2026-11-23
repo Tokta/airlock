@@ -61,7 +61,7 @@ export function assertSafeRoot(root, { requireProject = true } = {}) {
   }
 }
 
-const KNOWN_KEYS = new Set(['network', 'ports', 'envFile', 'env', 'resources', 'readOnly', 'secrets']);
+const KNOWN_KEYS = new Set(['network', 'ports', 'envFile', 'env', 'resources', 'readOnly', 'secrets', 'shims']);
 
 // Env names the launcher sets itself, or that would change how Claude authenticates/stores state.
 const RESERVED_ENV = /^(HOME|CLAUDE_POD(_.*)?|CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_.*)$/;
@@ -158,6 +158,17 @@ function validate(raw, file) {
     }
     if (new Set(raw.secrets).size !== raw.secrets.length) throw bad('"secrets" has duplicates.');
   }
+  if (raw.shims !== undefined) {
+    const sh = raw.shims;
+    if (sh === null || typeof sh !== 'object' || Array.isArray(sh)) throw bad('"shims" must be an object, e.g. {"host": ["dev"]}.');
+    for (const key of Object.keys(sh)) if (key !== 'host') throw bad(`unknown "shims" key "${key}".`);
+    if (sh.host !== undefined) {
+      if (!Array.isArray(sh.host)) throw bad('"shims.host" must be an array of package script names.');
+      for (const name of sh.host) {
+        if (typeof name !== 'string' || !/^[^\s\0-]\S*$/.test(name)) throw bad(`"shims.host" entry ${JSON.stringify(name)} is not a script name.`);
+      }
+    }
+  }
   return raw;
 }
 
@@ -188,7 +199,7 @@ function readEnvFile(root, rel) {
 // Loads and resolves the project's config. With no config file, returns the empty defaults.
 // `hash` is the sha256 of the exact bytes, for the trust check.
 export function loadConfig({ root, configPath }) {
-  const empty = { network: null, ports: [], env: {}, resources: {}, readOnly: [], secrets: [], file: null, hash: null, text: null };
+  const empty = { network: null, ports: [], env: {}, resources: {}, readOnly: [], secrets: [], shims: null, file: null, hash: null, text: null };
   if (!configPath) return empty;
 
   let bytes;
@@ -213,6 +224,8 @@ export function loadConfig({ root, configPath }) {
     resources: raw.resources || {},
     readOnly: (raw.readOnly || []).map((p) => readOnlyPath(p).rel),
     secrets: raw.secrets || [],
+    // null: the project didn't opt in to shims; otherwise the scripts that stay on the host.
+    shims: raw.shims ? { host: raw.shims.host || [] } : null,
     file: configPath,
     hash: sha256(bytes),
     text: bytes.toString('utf8'),
@@ -225,16 +238,46 @@ export function loadConfig({ root, configPath }) {
 
 const trustFile = (root) => path.join(trustDir(), `${sha256(root)}.json`);
 
-export function isTrusted(root, hash) {
+function trustRecord(root) {
   try {
     const rec = JSON.parse(readRegularFile(trustFile(root)).toString('utf8'));
-    return rec.root === root && rec.sha256 === hash;
+    return rec.root === root ? rec : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-export function trust(root, hash) {
+export function isTrusted(root, hash) {
+  return trustRecord(root)?.sha256 === hash;
+}
+
+// `shims` records whether the approved config had "shims". A pod can delete that key, or the
+// whole config, and the host shims must not then quietly run commands on the host: they check
+// this host-only record instead (see shim.js).
+export function trust(root, hash, { shims = false } = {}) {
   ensurePrivateDir(trustDir());
-  writeFileAtomic(trustFile(root), `${JSON.stringify({ root, sha256: hash, trustedAt: new Date().toISOString() }, null, 2)}\n`);
+  writeFileAtomic(trustFile(root), `${JSON.stringify({ root, sha256: hash, shims, trustedAt: new Date().toISOString() }, null, 2)}\n`);
+}
+
+export const optedIntoShims = (root) => trustRecord(root)?.shims === true;
+
+// Said before approving a config: one without "shims" in a project that had them turns them off,
+// and a pod may be the one that removed the key.
+export function shimsOffWarning(root, config) {
+  if (config.shims) return null;
+  // This project, or one it is inside: a pod of the outer project can plant this config.
+  let d = root;
+  while (!optedIntoShims(d) && path.dirname(d) !== d) d = path.dirname(d);
+  if (!optedIntoShims(d)) return null;
+  return d === root
+    ? 'This config has no "shims", and the one you approved had. Approving it runs pnpm, npm, node & co. on the host again in this project. A pod may have removed the key.'
+    : `This config has no "shims", and it is inside ${d}, which has them. Approving it runs pnpm, npm, node & co. on the host in this folder. A pod of ${d} may have planted it.`;
+}
+
+// For `claude-pod shims --forget`: the project removed its config or "shims" on purpose.
+export function forgetShims(root) {
+  const rec = trustRecord(root);
+  if (!rec?.shims) return false;
+  writeFileAtomic(trustFile(root), `${JSON.stringify({ ...rec, shims: false }, null, 2)}\n`);
+  return true;
 }

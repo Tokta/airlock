@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { assertSafeRoot, findProjectRoot, interpolate, isTrusted, loadConfig, trust } from '../src/config.js';
+import {
+  assertSafeRoot, findProjectRoot, forgetShims, interpolate, isTrusted, loadConfig, optedIntoShims, shimsOffWarning, trust,
+} from '../src/config.js';
 import { parseDotenv } from '../src/dotenv.js';
 import { readRegularFile } from '../src/safefs.js';
 import { tmp } from './helpers.js';
@@ -62,6 +64,11 @@ test('loadConfig resolves env from envFile and validates', () => {
   assert.match(config.hash, /^[0-9a-f]{64}$/);
   assert.deepEqual(config.readOnly, []);
   assert.deepEqual(config.secrets, []);
+  assert.equal(config.shims, null);
+  fs.writeFileSync(configPath, JSON.stringify({ shims: {} }));
+  assert.deepEqual(loadConfig({ root: dir, configPath }).shims, { host: [] });
+  fs.writeFileSync(configPath, JSON.stringify({ shims: { host: ['dev', 'deploy:prod'] } }));
+  assert.deepEqual(loadConfig({ root: dir, configPath }).shims, { host: ['dev', 'deploy:prod'] });
   fs.writeFileSync(configPath, JSON.stringify({ secrets: ['ANTHROPIC_API_KEY', 'RESEND_API_KEY'] }));
   assert.deepEqual(loadConfig({ root: dir, configPath }).secrets, ['ANTHROPIC_API_KEY', 'RESEND_API_KEY'], 'ANTHROPIC_* allowed: secrets never reach Claude');
   assert.deepEqual(config.ports, [{ port: 3000, fixed: false }, { port: 3131, fixed: false }]);
@@ -97,6 +104,12 @@ test('loadConfig resolves env from envFile and validates', () => {
   bad({ resources: { memory: '0' } }, /memory/);
   bad({ resources: { cpus: '-1' } }, /cpus/);
   bad({ resources: { pids: 1 } }, /pids/);
+  bad({ shims: [] }, /"shims" must be an object/);
+  bad({ shims: { hosts: [] } }, /unknown "shims" key "hosts"/);
+  bad({ shims: { host: 'dev' } }, /"shims.host" must be an array/);
+  bad({ shims: { host: ['dev', ''] } }, /is not a script name/);
+  bad({ shims: { host: ['--filter'] } }, /is not a script name/);
+  bad({ shims: { host: ['a b'] } }, /is not a script name/);
   bad({ secrets: 'A' }, /"secrets" must be an array/);
   bad({ secrets: ['A-B'] }, /not a valid variable name/);
   bad({ secrets: ['CLAUDE_CODE_OAUTH_TOKEN'] }, /set by claude-pod itself/);
@@ -156,5 +169,28 @@ test('readRegularFile: regular files only, size-capped, read from the opened des
   assert.throws(() => readRegularFile(path.join(dir, 'link')), /symlink/);
   if (spawnSync('mkfifo', [path.join(dir, 'fifo')]).status === 0) {
     assert.throws(() => readRegularFile(path.join(dir, 'fifo')), /not a regular file/); // never blocks
+  }
+});
+
+test('shims opt-in: sticky in the trust record, a warning before approving a config that drops it', () => {
+  const prev = process.env.HOME;
+  process.env.HOME = tmp();
+  try {
+    const root = tmp();
+    assert.equal(optedIntoShims(root), false);
+    assert.equal(forgetShims(root), false);
+    trust(root, 'h1', { shims: true });
+    assert.equal(optedIntoShims(root), true);
+    assert.equal(shimsOffWarning(root, { shims: { host: [] } }), null);
+    assert.match(shimsOffWarning(root, { shims: null }), /runs pnpm, npm, node & co. on the host again/);
+    assert.equal(forgetShims(root), true);
+    assert.equal(optedIntoShims(root), false);
+    assert.equal(isTrusted(root, 'h1'), true, 'forgetting keeps the approval itself');
+    assert.equal(shimsOffWarning(root, { shims: null }), null);
+    // A config in a subfolder of an opted-in project: a pod of that project could have planted it.
+    trust(root, 'h2', { shims: true });
+    assert.match(shimsOffWarning(path.join(root, 'sub'), { shims: null }), /inside .*, which has them/);
+  } finally {
+    process.env.HOME = prev;
   }
 });

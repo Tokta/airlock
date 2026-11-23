@@ -10,6 +10,7 @@ Full reference for claude-pod. For the short version, see the [README](../README
 - [Ports](#ports)
 - [Login](#login)
 - [Secrets](#secrets)
+- [Host shims](#host-shims)
 - [Running several pods](#running-several-pods)
 - [Updating or pinning Claude Code](#updating-or-pinning-claude-code)
 - [Security model](#security-model)
@@ -39,6 +40,7 @@ claude-pod doctor                     # checks everything
 | `claude-pod build [--claude-version V]` | build or rebuild the image |
 | `claude-pod auth [--from-env] [--remove]` | store the login token from `claude setup-token` |
 | `claude-pod init` | create (and trust) `claude-pod.config.json` for the current project |
+| `claude-pod shims` | write launchers so `pnpm`, `npm`, `node` & co. run in a pod in projects that opted in (see [Host shims](#host-shims)) |
 | `claude-pod secret set NAME` / `list` / `rm NAME` | this project's API keys in the macOS keychain, for `shell` and `exec` pods (see [Secrets](#secrets)) |
 | `claude-pod trust` | review and approve a new or changed `claude-pod.config.json` |
 | `claude-pod ps [--all]` / `claude-pod stop [NAME…] [--all]` | list / stop running pods |
@@ -99,6 +101,7 @@ It must be a project: claude-pod refuses `/`, your home directory, anything cont
 | `resources` | `pids` (default 4096), `memory`, `cpus`. |
 | `readOnly` | Project files and folders your host runs, which pods must not change (see [Project files that would run on your host](#project-files-that-would-run-on-your-host)). Paths relative to the project; no `..`, nothing under `node_modules` or `.git`. |
 | `secrets` | Names of keychain secrets to hand to `shell` and `exec` pods, e.g. `["RESEND_API_KEY"]` (see [Secrets](#secrets)). Never `claude` or `run` pods. |
+| `shims` | `{"host": ["dev"]}`: package commands typed on the host go to a pod, except these scripts (see [Host shims](#host-shims)). |
 
 **The config must be approved.** The file lives in the project, which pods can write — so claude-pod only uses a config whose exact content you've approved. `init` approves what it creates; after any edit (yours or a pod's), run `claude-pod trust` to review and approve it. Interactive launches ask; unattended ones (`run` from an agent, no terminal) refuse to start. Approvals live in `~/.config/claude-pod/trust/`, which no pod can reach.
 
@@ -171,6 +174,41 @@ What this does **not** do:
 - A value changed to non-ASCII in Keychain Access comes back from `security` as hex and reaches the pod that way. Set values with `claude-pod secret set`.
 - macOS only for now; elsewhere `secret` says so and pods start without them. `claude-pod doctor` shows each listed secret as stored or missing, once the config is trusted.
 
+## Host shims
+
+So nobody has to remember `claude-pod exec`, neither you in a terminal nor the host Claude session (which uses the same `PATH`):
+
+```sh
+claude-pod shims     # writes launchers to ~/.config/claude-pod/shims/ and prints:
+export PATH="$HOME/.config/claude-pod/shims:$PATH"     # put this in ~/.zshrc or ~/.bashrc
+```
+
+The launchers cover `pnpm`, `npm`, `npx`, `node`, `tsx`, `yarn`, `bunx` and `bun`. claude-pod never edits your rc files. Each one looks upward for a `claude-pod.config.json`, from the current folder (for `node <file>`, from the file's folder):
+
+- **No config, or one without `shims`:** the real command runs, as if the shims weren't there. Only projects that opt in are affected.
+- **A config with `shims` that isn't trusted:** the command is refused with the `claude-pod trust` hint. It never runs on the host instead.
+- **A project whose approved config had `shims`** stays opted in, because a pod can edit or delete that file. If `shims` disappears or a subfolder gains a config of its own, commands are refused until you approve the change with `claude-pod trust`, which warns that it turns the shims off (for the subfolder, everything under it). If the config is gone, they are refused, and so is `claude-pod init`, until you restore it; if you deleted it on purpose, `claude-pod shims --forget` (in a terminal, after a confirmation) opts the project out.
+- **A trusted config with `shims`:** the command becomes `claude-pod exec --no-ports <cmd> <args…>`, with stdin, stdout, the exit code and Ctrl-C passed through, and without the banner. No ports, so `pnpm test` runs beside a running `pnpm dev`. No keychain secrets either: every `pnpm install` would hand them to postinstall scripts. An explicit `claude-pod exec` still gets them. The exceptions, which run on the host:
+  - **A `shims.host` script:** `pnpm <script>`, `pnpm run <script>`, `npm run <script>`, `npm start`/`stop`/`test`, optionally followed by `-- <args>`. claude-pod reads the script from the project's own `package.json` and runs it with `/bin/sh` in the project root, as npm would, but without the host's pnpm or npm (whose settings, like `script-shell` in `.npmrc`, a pod could write). It is refused unless `package.json` is under `readOnly`, and was for every pod of the project still running (one started under an older config can still write it). Arguments not after `--`, flags before the script, pnpm's own commands (`pnpm deploy`), a script `package.json` doesn't have, and a workspace package's own `package.json` all go to the pod instead. The script runs with the `PATH` you started it with, shims included, so a `pnpm test` inside it goes to a pod, minus relative entries like `node_modules/.bin`.
+  - **`node <file>`, when no pod can write `<file>`:** it is outside the project (a global CLI, claude-pod itself), or under `readOnly` (for every running pod, as above) or a folder claude-pod always locks (`.claude/`, `.git/hooks`), and no running pod found that path missing when it started (it may have created it). Every symlink on the way to it counts too: one a pod could have written sends the command to the pod, wherever it points. The host `node` gets the real path that was checked. `node` with no file, `node -e`, options before the file, and a file that doesn't exist as given go to the pod: the project's pod when an argument names something in it (`node ~/code/app/src`, from anywhere), else the current folder's.
+
+```json
+{ "shims": { "host": ["dev", "deploy:prod"] }, "readOnly": ["package.json", "scripts"] }
+```
+
+`shims.host` is for scripts that need the host's Docker, SSH or keychain. They should run no package code themselves; one that needs to (a dev script, say) calls `claude-pod exec` for that part. Put the files a host script runs under `readOnly` too. `claude-pod doctor` warns when `package.json` isn't, and when a real `pnpm`, `npm` or `node` comes before the shims on `PATH`.
+
+The launchers start claude-pod with the absolute `node` it ran on when you wrote them, and skip relative `PATH` entries, and the shims folder under any spelling, when looking for the real commands. What runs on the host gets your `PATH` back, shims included, so a global tool's own `pnpm build` in an opted-in project still goes to a pod. Run `claude-pod shims` again after moving claude-pod or that node; if claude-pod is gone, a launcher says so and runs the real command. Each shimmed command starts a fresh container: about half a second on a Mac with Docker Desktop. Commands that run on the host pay too: each `node` a host `pnpm` or `npm` starts goes through the `node` shim, about 0.1 s each, in every project.
+
+The shims stop accidents and narrow what a package can reach; they aren't a sandbox for the host. Still on the host:
+
+- a command run by its full path (`/usr/local/bin/node`) or a tool the shims don't cover;
+- a `shims.host` script and whatever it runs;
+- a global CLI started by `node`, with whatever project files it loads (`eslint` reading `eslint.config.js`, say), and a `readOnly` script's imports from `node_modules`, which pods write;
+- a command pointed at the project from outside it (`pnpm -C ~/code/app install` run from another folder): the shims decide by the current folder.
+
+Approving a config that adds a `readOnly` path also approves that file's content as it is now, a pod's earlier edits included. And a pod already running when you approve it can still change it until that pod exits: the shims refuse the file meanwhile, but not after, so review it once that pod is gone. Shimmed pods get the config's `env` and `envFile` values, like any pod: keep real keys in `secrets`.
+
 ## Running several pods
 
 Pods are independent: unique names (`claude-pod-<project>-<id>`), free ports, per-project state, and a token that doesn't rotate. `claude-pod ps` lists them; `claude-pod stop` stops the current project's pods (or `--all`, or by name). If a launcher is killed (even with `kill -9`), a small watchdog stops its pod within seconds and quarantines anything it planted. If the watchdog is killed too (e.g. a harness that kills the whole session), the pod keeps running until you `claude-pod stop` it.
@@ -239,6 +277,7 @@ Git inside the pod still works for commits (identity comes from your global `use
 - **Git beyond the top-level hooks and config.** The pod can write the git index and create nested repositories in subfolders (which the index can register as submodules), and host git reads their settings too. The same goes for existing submodules and linked worktrees: their config and hooks under `.git/modules/` and `.git/worktrees/`, and each submodule's `.git` file, are pod-writable, and a host `git status` runs a submodule's `core.fsmonitor`. After an unattended run, inspect with hooks and fsmonitor off until you've reviewed the changes — see [After an unattended run](../INTEGRATION.md#after-an-unattended-run).
 - **The network.** Outbound is open by default, so a pod can send the project (and the login token) anywhere. `"network": "none"` or `NET=none` cuts it, but also takes Claude offline.
 - **The login token** — see [Login](#login).
+- **Commands the shims don't catch:** a full path (`/usr/local/bin/node`), other tools, global CLIs (and the project files they load), and `shims.host` scripts run on the host. See [Host shims](#host-shims).
 - **Keychain secrets** in `shell` and `exec` pods — see [Secrets](#secrets) for what they do and don't protect.
 - **This project's pod history and caches** in `~/.claude-pod/pods/<project>/`: a pod can read and alter its own project's past sessions, Claude settings and package caches, so it can poison a package that the next pod of the project installs. The host never reads the caches, but it does run what lands in `node_modules` (`pnpm dev` on the host): the same trust as the rest of the working tree.
 - **Hardlinks.** A hardlink inside the project to a file elsewhere on the same filesystem is reachable through the mount. It only matters for projects from untrusted sources.
@@ -257,7 +296,7 @@ PIDS=512 claude-pod            # lower the process cap
 
 ### Side effects outside the project folder
 
-- `~/.config/claude-pod/` — host-only: login token, config approvals, built image ID, settings, and short-lived private run files.
+- `~/.config/claude-pod/` — host-only: login token, config approvals, built image ID, settings, the `shims/` launchers if you ran `claude-pod shims`, and short-lived private run files.
 - On macOS, the keychain items you store with `claude-pod secret set` (service `claude-pod`). `uninstall` leaves them; remove them with `claude-pod secret rm`, or in Keychain Access for a project that moved (`secret list --all` shows them).
 - `~/.claude-pod/pods/` — one Claude state dir per project (sessions, settings). Its `pkg-cache/` folder holds the project's package-manager caches (corepack's pnpm downloads, the pnpm store and metadata cache, the npm cache), so pods don't download everything again on every launch. Each project keeps its own copy, typically tens of MB. `claude-pod uninstall` removes them, and deleting a project's `pkg-cache/` is always safe. A project's `env` can point any of `COREPACK_HOME`, `pnpm_config_store_dir`, `pnpm_config_cache_dir` and `npm_config_cache` elsewhere.
 - The `claude-pod` Docker image (~700 MB), the `node:24-slim` base, and build cache.

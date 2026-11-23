@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig, trust, validateResources } from './config.js';
+import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig, shimsOffWarning, trust, validateResources } from './config.js';
 import { assertNetwork, buildRunArgs, docker, preflight } from './docker.js';
 import { readToken } from './host.js';
 import { getSecret, secretValueError, supported } from './keychain.js';
@@ -58,8 +58,10 @@ async function ensureTrusted(root, config) {
   }
   warn(`${config.file} is new or has changed since you approved it. A pod can edit this file, so review it:`);
   process.stderr.write(`\n${clean(config.text.trimEnd(), '\n\t')}\n\n`);
+  const off = shimsOffWarning(root, config);
+  if (off) warn(off);
   if (!(await confirm('Trust this config for this project?'))) throw new CliError('Config not trusted; not starting the pod.');
-  trust(root, config.hash);
+  trust(root, config.hash, { shims: !!config.shims });
 }
 
 // This project's Claude state dir (sessions, settings, .claude.json). The pod can write anything in
@@ -165,6 +167,17 @@ function readSecrets(root, names, usesClaude, command) {
   return out;
 }
 
+// Whether our own stdin is a pipe, a file or a socket (`echo x | claude-pod exec cat`, a hook fed
+// JSON): docker forwards it only with -i. Not /dev/null or a closed stdin.
+function stdinCarriesData() {
+  try {
+    const st = fs.fstatSync(0);
+    return st.isFIFO() || st.isFile() || st.isSocket();
+  } catch {
+    return false;
+  }
+}
+
 // Docker --env-file content. Values can't contain newlines (config.js and host.js reject them).
 function envFileContent(env) {
   return Object.entries(env).map(([k, v]) => `${k}=${v}\n`).join('');
@@ -177,7 +190,12 @@ function envFileContent(env) {
 //   ownFixedPorts  publish fixed ports as themselves (exec, shell); agent pods get random ones
 //   stdio          [stdin, stdout, stderr] for the docker client ('inherit' or fds)
 //   stdinText      feed this text on the pod's stdin (via a private file, never argv)
-export async function launch({ mode, command, cwd = process.cwd(), usesClaude, publishPorts, ownFixedPorts = false, stdio = 'inherit', stdinText = null }) {
+//   secrets        pass the config's keychain secrets (shell/exec); false for shim-started pods
+//   quiet          no banner (pod name, project, ports): for shimmed commands; warnings still show
+export async function launch({
+  mode, command, cwd = process.cwd(), usesClaude, publishPorts, ownFixedPorts = false, stdio = 'inherit', stdinText = null,
+  secrets: withSecrets = true, quiet = false,
+}) {
   const { root, configPath } = findProjectRoot(cwd);
   assertSafeRoot(root);
   const config = applyEnvOverrides(loadConfig({ root, configPath }));
@@ -209,7 +227,7 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   const priv = path.join(runDir(), name);
   ensurePrivateDir(priv);
 
-  const secrets = readSecrets(root, config.secrets, usesClaude, command);
+  const secrets = withSecrets ? readSecrets(root, config.secrets, usesClaude, command) : {};
   const podEnv = { ...podEnvFor(root, config.env), ...secrets };
   if (token) podEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
   const envFile = path.join(priv, 'env');
@@ -225,9 +243,9 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   const [stdin, stdout] = io;
   const stdinTty = stdin === 'inherit' ? !!process.stdin.isTTY : false;
   const stdoutTty = stdout === 'inherit' ? !!process.stdout.isTTY : false;
-  // -i whenever stdin carries something (a terminal or a prompt file); -t only for a real terminal
-  // on both ends — passing -t with piped input makes docker fail.
-  const interactive = stdinTty || (stdin !== 'inherit' && stdin !== 'ignore');
+  // -i whenever stdin carries something (a terminal, a pipe, a file, a prompt file); -t only for a
+  // real terminal on both ends — passing -t with piped input makes docker fail.
+  const interactive = stdinTty || (stdin === 'inherit' ? stdinCarriesData() : stdin !== 'ignore');
   const tty = stdinTty && stdoutTty;
 
   const realCwd = fs.realpathSync(cwd);
@@ -241,11 +259,13 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
     command,
   });
 
-  info(`claude-pod ${name}`);
-  detail(`project: ${clean(root)}${configPath ? '' : ' (no claude-pod.config.json)'}`);
-  if (config.network) detail(`network: ${config.network}`);
-  if (Object.keys(secrets).length) detail(`secrets from the keychain: ${Object.keys(secrets).join(', ')}`);
-  for (const { container, host } of ports) detail(`port ${container} → http://127.0.0.1:${host}`);
+  if (!quiet) {
+    info(`claude-pod ${name}`);
+    detail(`project: ${clean(root)}${configPath ? '' : ' (no claude-pod.config.json)'}`);
+    if (config.network) detail(`network: ${config.network}`);
+    if (Object.keys(secrets).length) detail(`secrets from the keychain: ${Object.keys(secrets).join(', ')}`);
+    for (const { container, host } of ports) detail(`port ${container} → http://127.0.0.1:${host}`);
+  }
   if (mode === 'shell') {
     const how = secrets.ANTHROPIC_API_KEY ? 'would run on ANTHROPIC_API_KEY (API billing) with the project\'s secrets' : 'is not logged in';
     detail(`login: none in this pod, so \`claude\` here ${how}; use ${bold('claude-pod claude')}`);
@@ -258,7 +278,7 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   watchdog.stdin.unref?.();
   watchdog.unref();
   const run = beginRun(root, name, { missing: snapshotMissing(root, config.readOnly, readOnly), readOnly, extra: config.readOnly });
-  if (run.locked.length) {
+  if (run.locked.length && !quiet) {
     detail(`locked until the pod exits (host edits to them fail meanwhile): ${run.locked.map((p) => clean(path.relative(root, p))).join(', ')}`);
   }
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { assertSafeRoot, findProjectRoot, loadConfig, trust } from '../config.js';
+import { assertSafeRoot, findProjectRoot, loadConfig, optedIntoShims, trust } from '../config.js';
 import { docker } from '../docker.js';
 import { CONFIG_FILE } from '../paths.js';
 import { CliError, bold, detail, info, ok } from '../ui.js';
@@ -19,6 +19,9 @@ trusted. Keys:
   env        extra environment for the pod, e.g. {"DATABASE_URL": "postgresql://u:\${PW}@postgres/db"}
              (\${VAR} comes from envFile only, never from your host environment)
   resources  {"pids": 4096, "memory": "4g", "cpus": 2}
+  readOnly   project files the host runs, which pods can't change, e.g. ["package.json", "scripts"]
+  secrets    keychain secrets for shell and exec pods (claude-pod secret set NAME), e.g. ["API_KEY"]
+  shims      {"host": ["dev"]}: host pnpm/npm/node go to a pod, except these scripts (claude-pod shims)
 
 After editing the file, approve the new content with \`claude-pod trust\`.`;
 
@@ -43,6 +46,12 @@ export async function init(argv) {
   if (found.configPath) throw new CliError(`${found.configPath} already exists.`);
   const { root } = found;
   assertSafeRoot(root, { requireProject: false });
+  // A fresh config (and its trust record) would quietly end the project's shims opt-in.
+  if (optedIntoShims(root)) {
+    throw new CliError(`${root} had a ${CONFIG_FILE} with "shims", and it is gone. A pod may have deleted it.`, {
+      hint: 'Restore it (from git, say). If you removed it on purpose, see claude-pod shims --help.',
+    });
+  }
 
   const config = { $comment: 'claude-pod project config — run `claude-pod init --help` for the keys.' };
   const network = detectComposeNetwork(root);

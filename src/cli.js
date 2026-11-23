@@ -8,6 +8,7 @@ import { init } from './commands/init.js';
 import { ps, stop } from './commands/pods.js';
 import { run } from './commands/run.js';
 import { secret } from './commands/secret.js';
+import { shims } from './commands/shims.js';
 import { trustCommand } from './commands/trust.js';
 import { uninstall } from './commands/uninstall.js';
 import { launch } from './launch.js';
@@ -34,6 +35,7 @@ Setup & management:
   init                    create claude-pod.config.json for this project
   trust                   review and approve this project's (changed) config
   secret set|list|rm      this project's keychain secrets for shell/exec pods (macOS)
+  shims                   write host launchers so pnpm/npm/node/… go to a pod in opted-in projects
   ps [--all]              list running pods
   stop [NAME...] [--all]  stop pods
   guide                   briefing for AI agents + status of this project (read-only)
@@ -87,6 +89,7 @@ const COMMANDS = {
   exec: execCommand,
   run,
   secret,
+  shims,
   build,
   auth,
   init,

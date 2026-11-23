@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig, trust as recordTrust } from '../config.js';
+import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig, shimsOffWarning, trust as recordTrust } from '../config.js';
 import { canPrompt, confirm } from '../prompt.js';
 import { CliError, bold, clean, ok, warn } from '../ui.js';
 
@@ -26,8 +26,10 @@ export async function trustCommand(argv) {
   if (!canPrompt()) throw new CliError('claude-pod trust needs a terminal.');
   warn(`Review ${config.file} (a pod can edit this file):`);
   process.stderr.write(`\n${clean(config.text.trimEnd(), '\n\t')}\n\n`);
+  const off = shimsOffWarning(found.root, config);
+  if (off) warn(off);
   if (!(await confirm('Trust this config for this project?'))) throw new CliError('Not trusted.');
-  recordTrust(found.root, config.hash);
+  recordTrust(found.root, config.hash, { shims: !!config.shims });
   ok('Trusted.');
   return 0;
 }

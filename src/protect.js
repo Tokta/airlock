@@ -21,7 +21,7 @@ import { pendingDir, sha256 } from './paths.js';
 import { ensurePrivateDir, isInside, kind, readRegularFile, writeFileAtomic } from './safefs.js';
 import { CliError, warn } from './ui.js';
 
-const LOCKED = [
+export const LOCKED = [
   { rel: '.git/hooks', type: 'dir', create: true }, // run by git on the host (commit, push, …)
   { rel: '.git/config', type: 'file' }, // core.fsmonitor, core.hooksPath, filters, aliases, sshCommand
   { rel: '.git/config.worktree', type: 'file' }, // read after .git/config when extensions.worktreeConfig is on
@@ -406,6 +406,21 @@ function otherRecords(root, self) {
   }
   return names.filter((n) => n !== self).map(readRecord).filter((r) => r?.root === root)
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+
+// Whether `p` (a real path inside `root`) is, or is inside, a path that some run of this project
+// found missing at its start: that run's pod may have created it, and it is quarantined only once
+// the run ends. Until then it is pod-written, whatever the config says.
+export function maybePlanted(root, p) {
+  const rel = fold(path.relative(root, p).split(path.sep).join('/'));
+  return otherRecords(root, null).some((r) => Array.isArray(r.missing) && r.missing.some((m) => (
+    typeof m === 'string' && (rel === fold(m) || rel.startsWith(`${fold(m)}/`)))));
+}
+
+// The `readOnly` lists of this project's runs that haven't been swept. A pod started under an
+// older config may write a path that the current config lists, until that run ends.
+export function runningReadOnly(root) {
+  return otherRecords(root, null).map((r) => (Array.isArray(r.readOnly) ? r.readOnly.filter((x) => typeof x === 'string') : []));
 }
 
 // Serializes the steps that read other runs' records and lock or unlock files, so a run that
