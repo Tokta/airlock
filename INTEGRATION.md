@@ -20,13 +20,13 @@ when there's a `.env`. Then fill in the rest, for example:
 
 ```json
 {
-  "network": "ops-olive_default",
+  "network": "my-app_default",
   "ports": [3000, 3131],
   "envFile": ".env",
   "env": {
     "HOST": "0.0.0.0",
-    "DATABASE_URL": "postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/ops_olive_database",
-    "MIGRATION_DATABASE_URL": "postgresql://ops_olive:${POSTGRES_PASSWORD}@postgres:5432/ops_olive_database"
+    "DATABASE_URL": "postgresql://app_user:${APP_USER_PASSWORD}@postgres:5432/my_app",
+    "MIGRATION_DATABASE_URL": "postgresql://app_owner:${POSTGRES_PASSWORD}@postgres:5432/my_app"
   }
 }
 ```
@@ -65,7 +65,7 @@ secrets. Any change — yours, a teammate's via `git pull`, or a pod's — must 
 
 Agents launch pods in many shapes — with `P=… &&`, after `cd …;`, with `"$(cat …)"`, redirects and
 `echo exit=$?`. Each shape is a different command string, so path-based rules like
-`Bash(./scripts/airlock.sh:*)` keep missing. `airlock run` removes the need for all of that
+`Bash(./scripts/sandbox.sh:*)` keep missing. `airlock run` removes the need for all of that
 plumbing, so one rule covers it. In the project's `.claude/settings.json`:
 
 ```json
@@ -103,7 +103,7 @@ Before → after:
 
 ```bash
 # before
-P=/private/tmp/…/scratchpad && ./scripts/airlock.sh claude --print --dangerously-skip-permissions \
+P=/private/tmp/…/scratchpad && ./scripts/sandbox.sh claude --print --dangerously-skip-permissions \
   --model opus --output-format text "$(cat $P/step-implementer-6b1.md)" > $P/impl-6b1.out 2> $P/impl-6b1.err; \
   echo "exit=$?" >> $P/impl-6b1.out
 
@@ -122,22 +122,7 @@ If your scratchpads live somewhere other than a temp dir, allow that folder host
 
 ---
 
-## 3. Migrating from the per-project scripts
-
-If the project has the old `scripts/airlock.sh` / `scripts/airlock-auth.sh`:
-
-1. Move its `NETWORK`, ports and injected env into `airlock.config.json` (step 1), then
-   `airlock trust`.
-2. Delete both scripts, and any `pod` / `pod:auth` entries in `package.json`
-   (or point them at `airlock` / `airlock auth`).
-3. Replace the old permission rules with `Bash(airlock run:*)` and `Bash(airlock guide:*)` (step 2).
-4. Update CLAUDE.md / skills that mention `./scripts/airlock.sh`.
-5. Once per machine: `claude setup-token` + `airlock auth` (replaces the Keychain export; it
-   also deletes the old copied login from `~/.airlock`).
-
----
-
-## 4. (Optional) pnpm monorepos: `node_modules` for host *and* pod
+## 3. (Optional) pnpm monorepos: `node_modules` for host *and* pod
 
 Host (macOS) and pod (Linux) share the same `node_modules`, so native packages (esbuild, sharp,
 next-swc, …) need binaries for both. In `pnpm-workspace.yaml`, then a clean `pnpm install`:
@@ -157,9 +142,9 @@ the `AIRLOCK` marker:
 
 ---
 
-## 5. Run the whole dev loop in a pod
+## 4. Run the whole dev loop in a pod
 
-Steps 1–4 sandbox the agents. The dev loop itself (`pnpm install`, `pnpm dev`, tests, builds)
+Steps 1–3 sandbox the agents. The dev loop itself (`pnpm install`, `pnpm dev`, tests, builds)
 still runs on your host, where a malicious package can read `~/.ssh`, cloud keys and every other
 project. In a project that opts in, package commands run in a pod instead, whether you typed them
 or the host Claude session did.

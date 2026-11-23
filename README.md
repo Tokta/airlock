@@ -80,7 +80,7 @@ pnpm dev                               # now runs in a pod
 - `secrets`: handed to dev-loop pods only, never to Claude's.
 - `shims.host`: the few scripts that really need your Mac (Docker, SSH, deploys).
 
-The full walkthrough is in [Run the whole dev loop in a pod](INTEGRATION.md#5-run-the-whole-dev-loop-in-a-pod).
+The full walkthrough is in [Run the whole dev loop in a pod](INTEGRATION.md#4-run-the-whole-dev-loop-in-a-pod).
 
 ## What it does and doesn't protect
 
