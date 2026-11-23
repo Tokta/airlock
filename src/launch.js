@@ -7,13 +7,13 @@ import { spawn, spawnSync } from 'node:child_process';
 import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig, trust, validateResources } from './config.js';
 import { assertNetwork, buildRunArgs, docker, preflight } from './docker.js';
 import { readToken } from './host.js';
-import { podsDir, projectStateDir, runDir, stateRoot } from './paths.js';
+import { POD_CACHE_DIR, podsDir, projectStateDir, runDir, stateRoot } from './paths.js';
 import { allocatePorts } from './ports.js';
 import { canPrompt, confirm } from './prompt.js';
 import {
   beginRun, protectedMounts, snapshotMissing, sweepPending, sweepRecord,
 } from './protect.js';
-import { ensurePrivateDir, isInside, kind, writeFileAtomic } from './safefs.js';
+import { ensurePrivateDir, isInside, kind, readRegularFile, writeFileAtomic } from './safefs.js';
 import { CliError, bold, clean, detail, info, warn } from './ui.js';
 
 const WATCHDOG = path.join(path.dirname(fileURLToPath(import.meta.url)), 'watchdog.js');
@@ -96,6 +96,41 @@ function writeGitIdentity(stateDir) {
   writeFileAtomic(path.join(stateDir, 'gitconfig'), `${lines.join('\n')}\n`, 0o644);
 }
 
+// Package-manager caches that outlive a pod (HOME in the pod is ephemeral): corepack's downloads,
+// the pnpm store and metadata cache, and the npm cache, under the project's state dir. They are
+// pod-writable, so a pod can poison them, but only for later pods of the same project, which
+// already share its working tree and node_modules. The host never reads them.
+// pnpm 11+ reads pnpm_config_*. pnpm 10 and older read the store from npm_config_store_dir,
+// which makes npm warn about an unknown setting on every run, so it is only set when the
+// project's package.json pins such a pnpm. That file is pod-writable, but it only picks which of
+// two pod-side names is set. The config's `env` can override any of these.
+function cacheEnv(root) {
+  const env = {
+    COREPACK_HOME: `${POD_CACHE_DIR}/corepack`,
+    pnpm_config_store_dir: `${POD_CACHE_DIR}/pnpm-store`,
+    pnpm_config_cache_dir: `${POD_CACHE_DIR}/pnpm-cache`,
+    npm_config_cache: `${POD_CACHE_DIR}/npm`,
+  };
+  let pm = '';
+  try {
+    pm = JSON.parse(readRegularFile(path.join(root, 'package.json'), 1024 * 1024)?.toString('utf8') || '{}').packageManager;
+  } catch {
+    // no package.json, or not one we can read: pnpm 11+ settings only
+  }
+  const major = typeof pm === 'string' ? /^pnpm@(\d+)\./.exec(pm)?.[1] : null;
+  return { env, oldPnpm: !!major && Number(major) <= 10 };
+}
+
+// The pod's env-file variables: caches, then the config's env (which may move a cache), then what
+// the launcher always sets. pnpm 10 only reads npm_config_store_dir, so it follows the final
+// pnpm_config_store_dir unless the config sets it itself.
+function podEnvFor(root, configEnv) {
+  const { env, oldPnpm } = cacheEnv(root);
+  const merged = { ...env, ...configEnv, GIT_CONFIG_GLOBAL: '/home/claude-pod/.claude/gitconfig' };
+  if (oldPnpm && !Object.hasOwn(configEnv, 'npm_config_store_dir')) merged.npm_config_store_dir = merged.pnpm_config_store_dir;
+  return merged;
+}
+
 // Docker --env-file content. Values can't contain newlines (config.js and host.js reject them).
 function envFileContent(env) {
   return Object.entries(env).map(([k, v]) => `${k}=${v}\n`).join('');
@@ -140,7 +175,7 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   const priv = path.join(runDir(), name);
   ensurePrivateDir(priv);
 
-  const podEnv = { ...config.env, GIT_CONFIG_GLOBAL: '/home/claude-pod/.claude/gitconfig' };
+  const podEnv = podEnvFor(root, config.env);
   if (token) podEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
   const envFile = path.join(priv, 'env');
   writeFileAtomic(envFile, envFileContent(podEnv));

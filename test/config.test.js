@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { assertSafeRoot, findProjectRoot, interpolate, isTrusted, loadConfig, trust } from '../src/config.js';
 import { parseDotenv } from '../src/dotenv.js';
+import { readRegularFile } from '../src/safefs.js';
 import { tmp } from './helpers.js';
 
 test('project root: config file beats git root, git root beats cwd', () => {
@@ -132,4 +134,18 @@ test('project root is spelled as on disk, so another case is the same project', 
   fs.mkdirSync(path.join(dir, 'MyApp', '.git'), { recursive: true });
   if (!fs.existsSync(path.join(dir, 'myapp'))) return t.skip('case-sensitive file system');
   assert.equal(findProjectRoot(path.join(dir, 'myapp')).root, path.join(dir, 'MyApp'));
+});
+
+test('readRegularFile: regular files only, size-capped, read from the opened descriptor', () => {
+  const dir = tmp();
+  const f = path.join(dir, 'a');
+  fs.writeFileSync(f, 'hello');
+  assert.equal(readRegularFile(f).toString(), 'hello');
+  assert.equal(readRegularFile(path.join(dir, 'none')), null);
+  assert.throws(() => readRegularFile(f, 4), /too large/);
+  fs.symlinkSync(f, path.join(dir, 'link'));
+  assert.throws(() => readRegularFile(path.join(dir, 'link')), /symlink/);
+  if (spawnSync('mkfifo', [path.join(dir, 'fifo')]).status === 0) {
+    assert.throws(() => readRegularFile(path.join(dir, 'fifo')), /not a regular file/); // never blocks
+  }
 });

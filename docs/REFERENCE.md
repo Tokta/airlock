@@ -156,7 +156,7 @@ claude-pod build                          # refetch the latest Claude Code
 claude-pod build --claude-version 2.0.0   # pin (also: CLAUDE_CODE_VERSION=2.0.0)
 ```
 
-The image is intentionally minimal: `node:24-slim` + `git` + `curl` + `less` + `jq` + `gh` + `pnpm` (pinned) + Claude Code. Add toolchains your projects need by editing the `Dockerfile` and re-running `claude-pod build`. `build` records the image ID; launches refuse a `claude-pod` tag that points at any other image.
+The image is intentionally minimal: `node:24-slim` + `git` + `curl` + `less` + `jq` + `gh` + `pnpm` through corepack + Claude Code. A project's `packageManager` pin decides the pnpm version; without one, corepack fetches the latest pnpm on the project's first launch and keeps using it (it is cached in `pkg-cache/`). Add toolchains your projects need by editing the `Dockerfile` and re-running `claude-pod build`. `build` records the image ID; launches refuse a `claude-pod` tag that points at any other image.
 
 ## Security model
 
@@ -167,7 +167,7 @@ The pod is treated as hostile: assume the agent inside was prompt-injected. Two 
 One `docker run` (see `buildRunArgs` in [`src/docker.js`](../src/docker.js)):
 
 - the project folder, read-write, at its real path — **except** the files below, which are read-only;
-- its own project's state dir `~/.claude-pod/pods/<project>/` (sessions, Claude settings) — never another project's;
+- its own project's state dir `~/.claude-pod/pods/<project>/` (sessions, Claude settings, package caches) — never another project's;
 - the login token (`claude` and `run` only) and config env through a private env-file (not on the command line, not in the docker client's environment);
 - your user's uid (`--user`), `--cap-drop=ALL`, `no-new-privileges`, `--pids-limit`, `--init`, optional memory/CPU caps;
 - outbound network (or none), and only the ports you configured, on `127.0.0.1`.
@@ -211,7 +211,7 @@ Git inside the pod still works for commits (identity comes from your global `use
 - **Git beyond the top-level hooks and config.** The pod can write the git index and create nested repositories in subfolders (which the index can register as submodules), and host git reads their settings too. The same goes for existing submodules and linked worktrees: their config and hooks under `.git/modules/` and `.git/worktrees/`, and each submodule's `.git` file, are pod-writable, and a host `git status` runs a submodule's `core.fsmonitor`. After an unattended run, inspect with hooks and fsmonitor off until you've reviewed the changes — see [After an unattended run](../INTEGRATION.md#after-an-unattended-run).
 - **The network.** Outbound is open by default, so a pod can send the project (and the login token) anywhere. `"network": "none"` or `NET=none` cuts it, but also takes Claude offline.
 - **The login token** — see [Login](#login).
-- **This project's pod history** in `~/.claude-pod/pods/<project>/`: a pod can read and alter its own project's past sessions and Claude settings.
+- **This project's pod history and caches** in `~/.claude-pod/pods/<project>/`: a pod can read and alter its own project's past sessions, Claude settings and package caches, so it can poison a package that the next pod of the project installs. The host never reads the caches, but it does run what lands in `node_modules` (`pnpm dev` on the host): the same trust as the rest of the working tree.
 - **Hardlinks.** A hardlink inside the project to a file elsewhere on the same filesystem is reachable through the mount. It only matters for projects from untrusted sources.
 
 ### What you shouldn't allow an orchestrator
@@ -229,13 +229,15 @@ PIDS=512 claude-pod            # lower the process cap
 ### Side effects outside the project folder
 
 - `~/.config/claude-pod/` — host-only: login token, config approvals, built image ID, settings, and short-lived private run files.
-- `~/.claude-pod/pods/` — one Claude state dir per project (sessions, settings).
+- `~/.claude-pod/pods/` — one Claude state dir per project (sessions, settings). Its `pkg-cache/` folder holds the project's package-manager caches (corepack's pnpm downloads, the pnpm store and metadata cache, the npm cache), so pods don't download everything again on every launch. Each project keeps its own copy, typically tens of MB. `claude-pod uninstall` removes them, and deleting a project's `pkg-cache/` is always safe. A project's `env` can point any of `COREPACK_HOME`, `pnpm_config_store_dir`, `pnpm_config_cache_dir` and `npm_config_cache` elsewhere.
 - The `claude-pod` Docker image (~700 MB), the `node:24-slim` base, and build cache.
 - The global `claude-pod` command (a symlink created by `npm install -g`).
 - In the project: an empty `.claude/` and `.git/hooks/` if they were missing, and any quarantined files. On macOS, while a pod runs, the immutable flag on its read-only files (see above).
 - While running: one container per pod, one watchdog process, and published ports on `127.0.0.1`.
 
 No `sudo`, no writes to your existing `~/.claude/`, shell rc files, or system paths.
+
+**node_modules from before the pnpm cache.** pnpm records its store in `node_modules/.modules.yaml`. When the store moves (after upgrading claude-pod, or switching between a host and a pod `pnpm install`), the next `pnpm install` asks to remove `node_modules`, and without a terminal it waits forever. Delete `node_modules` (and a leftover `.pnpm-store` in the project) or run `claude-pod exec pnpm install --config.confirm-modules-purge=false` once. For a tree shared by host and pod, a `storeDir` in `pnpm-workspace.yaml` wins over claude-pod's setting, so both sides agree.
 
 ## Reference
 

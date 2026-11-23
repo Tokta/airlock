@@ -79,7 +79,7 @@ export function assertNetwork(network) {
 //   <readOnly…> -> same, :ro        project files that run on the host (see protect.js).
 //   <stateDir> -> ~/.claude         this project's Claude state; also CLAUDE_CONFIG_DIR, so
 //                                   .claude.json lives there and no single-file mount is needed.
-//   --env-file                      config env + login token, from a private host-only file: never
+//   --env-file                      cache dirs + config env + login token, from a private host-only file: never
 //                                   on the command line, never in the docker client's environment.
 //   --cap-drop=ALL                  an unprivileged dev shell needs no Linux capabilities.
 //   no-new-privileges               setuid binaries in the image can't elevate.

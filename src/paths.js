@@ -47,3 +47,7 @@ export function projectStateDir(root) {
 // Where the per-project state dir is mounted inside the pod; also CLAUDE_CONFIG_DIR, so Claude
 // keeps .claude.json there too and no single-file mount is needed.
 export const POD_CONFIG_DIR = '/home/claude-pod/.claude';
+
+// Package-manager caches that outlive a pod, in the project's state dir (see cacheEnv in
+// launch.js). Not `cache/`, which Claude Code itself uses inside its config dir.
+export const POD_CACHE_DIR = `${POD_CONFIG_DIR}/pkg-cache`;

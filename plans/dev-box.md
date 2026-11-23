@@ -114,7 +114,7 @@ port, because OAuth callbacks, auth base URLs and cookies are set to it.
   [src/ports.js](../src/ports.js) maps fixed ports without probing, and a busy fixed port
   throws.
 
-## Batch 4 — package-manager caches that outlive a pod
+## [DONE] Batch 4 — package-manager caches that outlive a pod
 
 `HOME` in the pod is ephemeral, so every pod starts with an empty pnpm store and corepack
 cache. When a project pins a different pnpm in `packageManager` than the image's 12.6.0, corepack
@@ -126,6 +126,14 @@ downloads it on every launch, and every `pnpm install` downloads everything agai
 - It is pod-writable, so a pod can poison it, but only for later pods of the same project, which
   already share the working tree. Nothing on the host reads it.
 - `docs/REFERENCE.md` "Side effects outside the project folder": mention it, and that `claude-pod uninstall` removes it.
+- **As built (after review):** the folder is `pkg-cache/` (Claude Code owns `cache/`). pnpm 11+
+  reads `pnpm_config_store_dir` and needs `pnpm_config_cache_dir` to install offline;
+  `npm_config_store_dir` is set only for a root `packageManager` pin of pnpm 10 or older, because
+  npm warns about it. The variables go through the env-file, so a config's `env` can move them.
+  `readRegularFile` now checks the opened descriptor (a pod could swap in a FIFO).
+- **Found, not fixed:** the image's `corepack prepare pnpm@12.6.0` lands in `/root/.cache`, which
+  the pod user can't read, so pods without a pin fetch the latest pnpm on first launch. Fix in the
+  Dockerfile (a world-readable prepared copy, or `npm i -g pnpm@…`).
 
 ## Batch 5 — secrets from the host keychain
 

@@ -74,12 +74,31 @@ export function createExclusive(file, mode = 0o600) {
   return fs.openSync(file, 'wx', mode);
 }
 
-// Reads a small regular file, refusing symlinks and anything oversized.
+// Reads a small regular file, refusing symlinks and anything oversized. Checks the opened
+// descriptor, not the path: a pod can swap the path between a check and a read, for a FIFO that
+// would block the launcher or a symlink to /dev/zero.
 export function readRegularFile(file, maxBytes = 1024 * 1024) {
   const k = kind(file);
   if (k === 'missing') return null;
   if (k !== 'file') throw new CliError(`${file} is a ${k}, not a regular file. Refusing to read it.`);
-  const size = fs.statSync(file).size;
-  if (size > maxBytes) throw new CliError(`${file} is too large (${size} bytes).`);
-  return fs.readFileSync(file);
+  let fd;
+  try {
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    if (e.code === 'ELOOP') throw new CliError(`${file} is a symlink, not a regular file. Refusing to read it.`);
+    throw e;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new CliError(`${file} is not a regular file. Refusing to read it.`);
+    if (st.size > maxBytes) throw new CliError(`${file} is too large (${st.size} bytes).`);
+    const buf = Buffer.alloc(maxBytes + 1);
+    let len = 0;
+    for (let n; len <= maxBytes && (n = fs.readSync(fd, buf, len, maxBytes + 1 - len, null)) > 0;) len += n;
+    if (len > maxBytes) throw new CliError(`${file} is too large (more than ${maxBytes} bytes).`);
+    return buf.subarray(0, len);
+  } finally {
+    fs.closeSync(fd);
+  }
 }

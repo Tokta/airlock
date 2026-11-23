@@ -370,3 +370,39 @@ test('on macOS read-only files are immutable while the pod runs, and unlocked af
   fs.appendFileSync(config, '# host edit after the run\n'); // unlocked again
   assert.deepEqual(fs.readdirSync(path.join(s.home, '.config', 'claude-pod', 'pending')), [], 'record and copies removed');
 });
+
+test('package caches: in the state dir, pnpm 10 gets its store name too, the config can override', async () => {
+  const s = ready();
+  assert.equal((await cli(['exec', 'true'], { cwd: s.project, env: s.env })).code, 0);
+  const cache = '/home/claude-pod/.claude/pkg-cache';
+  let { envFile } = s.runs()[0];
+  for (const line of [`COREPACK_HOME=${cache}/corepack`, `pnpm_config_store_dir=${cache}/pnpm-store`, `pnpm_config_cache_dir=${cache}/pnpm-cache`, `npm_config_cache=${cache}/npm`]) {
+    assert.match(envFile, new RegExp(`^${line}$`, 'm'));
+  }
+  assert.doesNotMatch(envFile, /^npm_config_store_dir/m, 'npm warns about it, so only for pnpm 10 and older');
+
+  fs.writeFileSync(path.join(s.project, 'package.json'), JSON.stringify({ packageManager: 'pnpm@10.12.1+sha512.abc' }));
+  fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), JSON.stringify({ env: { COREPACK_HOME: '/tmp/cp', pnpm_config_store_dir: '/tmp/store' } }));
+  await trustConfig(s);
+  assert.equal((await cli(['exec', 'true'], { cwd: s.project, env: s.env })).code, 0);
+  ({ envFile } = s.runs()[1]);
+  assert.match(envFile, /^npm_config_store_dir=\/tmp\/store$/m, 'pnpm 10 follows a moved store');
+  assert.match(envFile, /^COREPACK_HOME=\/tmp\/cp$/m);
+  assert.doesNotMatch(envFile, /COREPACK_HOME=\/home/);
+
+  fs.writeFileSync(path.join(s.project, 'package.json'), JSON.stringify({ packageManager: 'pnpm@12.6.0' }));
+  assert.equal((await cli(['exec', 'true'], { cwd: s.project, env: s.env })).code, 0);
+  assert.doesNotMatch(s.runs()[2].envFile, /^npm_config_store_dir/m);
+});
+
+test('uninstall removes the login token first, and pod state a pod made read-only', async () => {
+  const s = ready();
+  const ro = path.join(s.home, '.claude-pod', 'pods', 'app-123', 'pkg-cache', 'ro');
+  fs.mkdirSync(ro, { recursive: true });
+  fs.writeFileSync(path.join(ro, 'f'), 'x');
+  fs.chmodSync(ro, 0o555);
+  const res = await cli(['uninstall', '--yes'], { cwd: s.project, env: s.env });
+  assert.equal(res.code, 0, res.stderr);
+  assert.equal(kind(path.join(s.home, '.claude-pod')), 'missing');
+  assert.equal(kind(s.hostDir), 'missing');
+});
