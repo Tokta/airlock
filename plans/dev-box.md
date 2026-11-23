@@ -187,8 +187,13 @@ Docker and the user's decisions:
   and `trust` warns before turning the shims off (for a nested config too).
 - The launchers use the absolute node that wrote them and skip relative PATH entries and the shims folder under any
   spelling. They give host children the shims back, and keep IPC fds.
-- Known costs: about 0.1 s for each `node` that a host pnpm or npm starts. Content a pod wrote to a newly-`readOnly`
-  file before its run ended is trusted once that pod exits (documented).
+- A `readOnly` path that a pod already running at approval time could still write (one started under an older config)
+  is fingerprinted at approval. If it changed by the time that pod is gone, the shims refuse it until `claude-pod trust`
+  approves the new content. The fingerprint is kept, under any spelling, until it is checked or approved. `trust` names
+  newly-`readOnly` paths, since approving them approves their current content.
+- Speed: outside opted-in projects, the launchers exec the real tool without starting node (-ef against an index of
+  opted-in roots that `trust` keeps). `node` costs about 0.08 s per call, because it is routed by its file. Host
+  children keep the shims only in an opted-in project.
 
 So that nobody has to remember `claude-pod exec`, in a person's terminal or in the host Claude
 session (which uses the same `PATH`):

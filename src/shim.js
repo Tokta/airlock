@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { isTrusted, loadConfig, optedIntoShims } from './config.js';
+import { isTrusted, loadConfig, optedIntoShims, readOnlyChanged } from './config.js';
 import { launch } from './launch.js';
 import { CONFIG_FILE, hostDir } from './paths.js';
 import { LOCKED, maybePlanted, runningReadOnly } from './protect.js';
@@ -122,7 +122,16 @@ export function podProof(root, config, real) {
     const entry = realEntry(root, rel);
     return entry !== null && isInside(real, entry);
   };
-  return LOCKED.some((l) => covers(l.rel)) || config.readOnly.some((rel) => covers(rel) && lockedForAllRuns(root, rel));
+  return LOCKED.some((l) => covers(l.rel)) || config.readOnly.some((rel) => covers(rel) && lockedForAllRuns(root, rel) && !changedSinceTrust(root, rel));
+}
+
+// A "readOnly" path that changed after you approved the config, while a pod started under an older
+// one could still write it: refused (not sent to a pod) until you have looked at it.
+function changedSinceTrust(root, rel) {
+  if (!readOnlyChanged(root, rel)) return false;
+  throw new CliError(`${path.join(root, rel)} changed after you approved ${CONFIG_FILE}, while a pod that could still write it was running.`, {
+    hint: `Review it (git diff), then run ${bold('claude-pod trust')} to approve its content.`,
+  });
 }
 
 // The root of the opted-in project in which a pod could write `p` (not podProof), or null.
@@ -205,7 +214,7 @@ function readHostScript(root, config, hs, cwd) {
   const listed = config.readOnly.some((rel) => fold(rel) === 'package.json');
   if (!listed || kind(file) !== 'file' || !podProof(root, config, realEntry(root, 'package.json') ?? file)) {
     throw new CliError(`"${hs.name}" is in shims.host, but ${file} is not read-only for every pod of the project, so a pod could have written it.`, {
-      hint: `Add "package.json" to "readOnly" in ${CONFIG_FILE} (and the files the script runs), then ${bold('claude-pod trust')}. A pod started before that can write it until it exits: review the file (git diff) after it has, before running the script.`,
+      hint: `Add "package.json" to "readOnly" in ${CONFIG_FILE} (and the files the script runs), then ${bold('claude-pod trust')}. A pod started before that can write it until it exits; if it does, the shims refuse the file until you approve it again.`,
     });
   }
   let scripts;
@@ -218,11 +227,23 @@ function readHostScript(root, config, hs, cwd) {
   return typeof script === 'string' ? script : null;
 }
 
+// Whether the current folder is in an opted-in project. Only then do the children of a host
+// command (a global tool's own `pnpm build`) go through the shims again: elsewhere they would only
+// pay for it. A config that can't be decided counts as opted in.
+function cwdOptedIn(realCwd) {
+  try {
+    return shimProject('node', realCwd) !== null;
+  } catch {
+    return true;
+  }
+}
+
 // The pod's starting folder for a project: the cwd when it is in that project, else its root.
 const podCwd = (realCwd, root) => (findUp(realCwd, hasConfig) === root ? realCwd : root);
 
 // Where a shimmed command goes:
-//   { to: 'host', args }                         the real binary, with these args
+//   { to: 'host', args, keepShims }              the real binary, with these args; keepShims: give
+//                                                its children the shims (in an opted-in project)
 //   { to: 'script', root, name, script, extra }  a shims.host script, run by claude-pod with /bin/sh
 //   { to: 'pod', cwd }                           `claude-pod exec --no-ports` from `cwd`
 // or throws a CliError when it must not run at all.
@@ -241,7 +262,7 @@ export function route(tool, args, cwd) {
     if (script) {
       const project = shimProject(tool, path.dirname(script.real));
       if (!script.linkRoot && (!project || podProof(project.root, project.config, script.real))) {
-        return { to: 'host', args: [script.real, ...args.slice(1)] };
+        return { to: 'host', args: [script.real, ...args.slice(1)], keepShims: cwdOptedIn(realCwd) };
       }
       return { to: 'pod', cwd: podCwd(realCwd, script.linkRoot ?? project.root) };
     }
@@ -249,7 +270,7 @@ export function route(tool, args, cwd) {
     if (root) return { to: 'pod', cwd: podCwd(realCwd, root) };
   }
   const project = shimProject(tool, realCwd);
-  if (!project) return { to: 'host', args };
+  if (!project) return { to: 'host', args, keepShims: false };
   const hs = hostScript(tool, args, project.config.shims.host);
   if (hs) {
     const script = readHostScript(project.root, project.config, hs, realCwd);
@@ -282,8 +303,8 @@ function realBinary(tool) {
   throw new CliError(`${tool} not found on PATH after the claude-pod shims.`);
 }
 
-// The PATH to hand to what runs on the host: the one you started with, shims included (so a
-// `pnpm build` that a host tool starts in an opted-in project still goes to a pod), minus relative
+// The PATH to hand to what runs on the host in an opted-in project: the one you started with,
+// shims included (so a `pnpm build` that a host tool starts still goes to a pod), minus relative
 // entries (`node_modules/.bin`), which a pod can fill.
 const hostPath = (shimPath) => (shimPath ?? process.env.PATH ?? '').split(path.delimiter).filter((d) => path.isAbsolute(d)).join(path.delimiter);
 
@@ -344,7 +365,7 @@ export async function shimMain(tool, args) {
     }
     const where = route(tool, args, cwd);
     if (where.to === 'host') {
-      const env = { ...process.env, PATH: hostPath(shimPath) };
+      const env = where.keepShims ? { ...process.env, PATH: hostPath(shimPath) } : { ...process.env };
       if (ipc !== null) env.NODE_CHANNEL_FD = String(ipc);
       return outcome(await runChild(realBinary(tool), where.args, { env, ipcFd: ipc, argv0: tool }));
     }

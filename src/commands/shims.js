@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { forgetShims, optedIntoShims } from '../config.js';
+import { forgetShims, optedIntoShims, shimsIndexPath, writeShimsIndex } from '../config.js';
 import { CONFIG_FILE, hostDir } from '../paths.js';
 import { canPrompt, confirm } from '../prompt.js';
 import { SHIM_TOOLS, shimsDir, sq } from '../shim.js';
@@ -39,7 +39,29 @@ const SHIM_JS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..',
 // node `claude-pod shims` ran on, handing it the PATH it was started with, for whatever runs on the
 // host. If claude-pod is gone, it says so and runs the real command, so uninstalling it doesn't
 // break node.
-export function shimScript(tool, { dir = shimsDir(), shimJs = SHIM_JS, node = process.execPath } = {}) {
+//
+// Fast path: for every tool but `node` (which is routed by its file), a command with no
+// claude-pod.config.json above the current folder and no opted-in project there (the index
+// `trust` keeps, compared with -ef so a different case or a symlink still matches) is not one the
+// shims change: it runs the real command straight away, without starting node.
+export function shimScript(tool, { dir = shimsDir(), shimJs = SHIM_JS, node = process.execPath, index = shimsIndexPath() } = {}) {
+  const fast = tool === 'node' ? '' : `# Fast path: nothing above the current folder opted in, so run the real ${tool} straight away.
+idx=${sq(index)}
+if [ -f "$idx" ] && [ -r "$idx" ] && here=$(pwd -P 2>/dev/null) && [ -n "$here" ]; then
+  d=$here
+  while :; do
+    [ -e "$d/claude-pod.config.json" ] && break
+    hit=
+    while IFS= read -r r; do
+      if [ -n "$r" ] && [ "$d" -ef "$r" ]; then hit=1; break; fi
+    done < "$idx"
+    [ -n "$hit" ] && break
+    [ "$d" = / ] && exec ${tool} "$@"
+    d=\${d%/*}
+    [ -n "$d" ] || d=/
+  done
+fi
+`;
   return `#!/bin/sh
 # Written by \`claude-pod shims\`. Runs ${tool} in a pod in projects that opted in.
 shims=${sq(dir)}
@@ -48,12 +70,6 @@ if [ -n "$CLAUDE_POD_IN_SHIM" ]; then
   exit 127
 fi
 CLAUDE_POD_SHIM_PATH=$PATH
-# A parent's IPC channel to \`node\` (spawn with 'ipc'): kept for the real node, not taken by the shim's.
-if [ -n "$NODE_CHANNEL_FD" ]; then
-  CLAUDE_POD_CHANNEL_FD=$NODE_CHANNEL_FD
-  export CLAUDE_POD_CHANNEL_FD
-  unset NODE_CHANNEL_FD
-fi
 set -f
 p=
 IFS=:
@@ -66,6 +82,12 @@ unset IFS
 set +f
 PATH=$p
 export PATH
+${fast}# A parent's IPC channel to \`node\` (spawn with 'ipc'): kept for the real node, not taken by the shim's.
+if [ -n "$NODE_CHANNEL_FD" ]; then
+  CLAUDE_POD_CHANNEL_FD=$NODE_CHANNEL_FD
+  export CLAUDE_POD_CHANNEL_FD
+  unset NODE_CHANNEL_FD
+fi
 js=${sq(shimJs)}
 if [ ! -f "$js" ]; then
   echo "claude-pod shim: $js is gone, so ${tool} runs on the host. Remove $shims from PATH in your shell rc, or run claude-pod shims again." >&2
@@ -110,6 +132,7 @@ export async function shims(argv) {
   ensurePrivateDir(hostDir());
   const dir = shimsDir();
   ensurePrivateDir(dir);
+  writeShimsIndex(); // approvals made before the shims existed
   for (const tool of SHIM_TOOLS) writeFileAtomic(path.join(dir, tool), shimScript(tool), 0o700);
   ok(`Wrote ${SHIM_TOOLS.length} shims to ${bold(dir)} (they run claude-pod on ${process.execPath})`);
   info('Put them first on PATH (in ~/.zshrc or ~/.bashrc, then open a new terminal):');

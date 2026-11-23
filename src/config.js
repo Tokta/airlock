@@ -1,10 +1,11 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CONFIG_FILE, sha256, trustDir } from './paths.js';
+import { CONFIG_FILE, hostDir, sha256, trustDir } from './paths.js';
 import { parseDotenv } from './dotenv.js';
 import { secretNameError } from './keychain.js';
-import { readOnlyPath } from './protect.js';
+import { readOnlyPath, runningReadOnly } from './protect.js';
 import { ensurePrivateDir, isInside, kind, readRegularFile, writeFileAtomic } from './safefs.js';
 import { CliError } from './ui.js';
 
@@ -251,15 +252,144 @@ export function isTrusted(root, hash) {
   return trustRecord(root)?.sha256 === hash;
 }
 
+const fold = (x) => (process.platform === 'darwin' ? x.normalize('NFC').toLowerCase() : x);
+
+// A fingerprint of a `readOnly` path's content: a file, a folder (recursively, never following a
+// symlink), a symlink's target, or "missing". null when it is too big to check.
+const TOO_BIG = Symbol('too big');
+export function fingerprint(p) {
+  const h = crypto.createHash('sha256');
+  let entries = 0;
+  let bytes = 0;
+  const walk = (q, rel) => {
+    if (++entries > 20_000) throw TOO_BIG;
+    const k = kind(q);
+    h.update(`${rel}\0${k}\0`);
+    if (k === 'file') {
+      const data = fs.readFileSync(q);
+      bytes += data.length;
+      if (bytes > 256 * 1024 * 1024) throw TOO_BIG;
+      h.update(sha256(data));
+    } else if (k === 'dir') {
+      for (const name of fs.readdirSync(q).sort()) walk(path.join(q, name), `${rel}/${name}`);
+    } else if (k === 'symlink') {
+      h.update(fs.readlinkSync(q));
+    }
+    h.update('\0');
+  };
+  try {
+    walk(p, '.');
+  } catch (e) {
+    if (e === TOO_BIG) return null;
+    throw e;
+  }
+  return h.digest('hex');
+}
+
+const writeRecord = (root, rec) => writeFileAtomic(trustFile(root), `${JSON.stringify(rec, null, 2)}\n`);
+
 // `shims` records whether the approved config had "shims". A pod can delete that key, or the
 // whole config, and the host shims must not then quietly run commands on the host: they check
 // this host-only record instead (see shim.js).
-export function trust(root, hash, { shims = false } = {}) {
+// `readOnly` is the config's list. A path in it that a pod of this project still running doesn't
+// have locked (it started under an older config) can change after this approval, until that pod
+// exits: its fingerprint now goes into `watch`, and the shims refuse it if it no longer matches
+// (see readOnlyChanged). One already watched keeps the fingerprint you last approved, under any
+// spelling and even while it is out of the list: only checking it, or your approval, settles it.
+// `readOnly` is also kept, so the next approval can say which paths are new (newReadOnly).
+export function trust(root, hash, { shims = false, readOnly = [] } = {}) {
   ensurePrivateDir(trustDir());
-  writeFileAtomic(trustFile(root), `${JSON.stringify({ root, sha256: hash, shims, trustedAt: new Date().toISOString() }, null, 2)}\n`);
+  const prev = trustRecord(root);
+  const running = runningReadOnly(root);
+  const watch = { ...(prev?.watch ?? {}) };
+  for (const rel of readOnly) {
+    const key = fold(rel);
+    if (Object.hasOwn(watch, key)) continue;
+    if (!running.every((list) => list.some((r) => fold(r) === key))) watch[key] = fingerprint(path.join(root, rel));
+  }
+  writeRecord(root, { root, sha256: hash, shims, readOnly, watch, trustedAt: new Date().toISOString() });
+  writeShimsIndex();
+}
+
+// The config's `readOnly` paths that the one you last approved didn't have: approving it approves
+// their content as it is now, whoever wrote it.
+export function newReadOnly(root, config) {
+  const before = trustRecord(root)?.readOnly;
+  if (!Array.isArray(before)) return config.readOnly;
+  const had = new Set(before.filter((r) => typeof r === 'string').map(fold));
+  return config.readOnly.filter((rel) => !had.has(fold(rel)));
+}
+
+// Whether `rel` (a "readOnly" entry) changed after you approved the config, while a pod that didn't
+// have it locked was running. The caller has checked that no such pod runs any more: a path that
+// still matches is then settled, and stops being watched.
+export function readOnlyChanged(root, rel) {
+  const rec = trustRecord(root);
+  const key = fold(rel);
+  if (!rec?.watch || !Object.hasOwn(rec.watch, key)) return false;
+  const now = fingerprint(path.join(root, rel));
+  if (now === null || now !== rec.watch[key]) return true;
+  const { [key]: _settled, ...watch } = rec.watch;
+  writeRecord(root, { ...rec, watch });
+  return false;
+}
+
+// The watched "readOnly" entries that no longer match what you approved, for `claude-pod trust`.
+export function changedReadOnly(root, readOnly) {
+  const watch = trustRecord(root)?.watch ?? {};
+  return readOnly.filter((rel) => {
+    const key = fold(rel);
+    return Object.hasOwn(watch, key) && (watch[key] === null || fingerprint(path.join(root, rel)) !== watch[key]);
+  });
+}
+
+// You reviewed them: their current content is what you approve. Still watched while a pod that
+// can write them runs. One too big to fingerprint can't be watched: your approval settles it.
+export function approveReadOnly(root, rels) {
+  const rec = trustRecord(root);
+  const watch = { ...(rec.watch ?? {}) };
+  for (const rel of rels) {
+    const now = fingerprint(path.join(root, rel));
+    if (now === null) delete watch[fold(rel)];
+    else watch[fold(rel)] = now;
+  }
+  writeRecord(root, { ...rec, watch });
 }
 
 export const optedIntoShims = (root) => trustRecord(root)?.shims === true;
+
+// The roots of opted-in projects, one per line, for the launchers' fast path (shims.js): a command
+// with none of these, and no config, above the current folder runs without starting node.
+export const shimsIndexPath = () => path.join(hostDir(), 'shims-opted');
+export function writeShimsIndex() {
+  // Twice when they differ: an approval written meanwhile (another `trust`) must not be lost,
+  // which would let the fast path miss its project.
+  ensurePrivateDir(hostDir());
+  for (let i = 0; i < 5; i++) {
+    const roots = optedRoots();
+    writeFileAtomic(shimsIndexPath(), roots.map((r) => `${r}\n`).join(''));
+    if (optedRoots().join('\n') === roots.join('\n')) return;
+  }
+}
+
+function optedRoots() {
+  let names = [];
+  try {
+    names = fs.readdirSync(trustDir()).filter((f) => f.endsWith('.json')).sort();
+  } catch {
+    // no approvals yet
+  }
+  const roots = [];
+  for (const name of names) {
+    try {
+      const rec = JSON.parse(readRegularFile(path.join(trustDir(), name)).toString('utf8'));
+      if (rec.shims === true && typeof rec.root === 'string' && path.isAbsolute(rec.root) && !/[\n\r]/.test(rec.root)) roots.push(rec.root);
+    } catch {
+      // not a record
+    }
+  }
+  return roots;
+}
 
 // Said before approving a config: one without "shims" in a project that had them turns them off,
 // and a pod may be the one that removed the key.
@@ -278,6 +408,7 @@ export function shimsOffWarning(root, config) {
 export function forgetShims(root) {
   const rec = trustRecord(root);
   if (!rec?.shims) return false;
-  writeFileAtomic(trustFile(root), `${JSON.stringify({ ...rec, shims: false }, null, 2)}\n`);
+  writeRecord(root, { ...rec, shims: false });
+  writeShimsIndex();
   return true;
 }

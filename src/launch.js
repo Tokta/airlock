@@ -4,7 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
-import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig, shimsOffWarning, trust, validateResources } from './config.js';
+import {
+  assertSafeRoot, findProjectRoot, isTrusted, loadConfig, newReadOnly, shimsOffWarning, trust, validateResources,
+} from './config.js';
 import { assertNetwork, buildRunArgs, docker, preflight } from './docker.js';
 import { readToken } from './host.js';
 import { getSecret, secretValueError, supported } from './keychain.js';
@@ -60,8 +62,10 @@ async function ensureTrusted(root, config) {
   process.stderr.write(`\n${clean(config.text.trimEnd(), '\n\t')}\n\n`);
   const off = shimsOffWarning(root, config);
   if (off) warn(off);
+  const added = newReadOnly(root, config);
+  if (added.length) warn(`New "readOnly" paths: ${added.map((r) => clean(r)).join(', ')}. Approving the config also approves their content as it is now, for your host to run; a pod may have written it. Review them (git diff) first.`);
   if (!(await confirm('Trust this config for this project?'))) throw new CliError('Config not trusted; not starting the pod.');
-  trust(root, config.hash, { shims: !!config.shims });
+  trust(root, config.hash, { shims: !!config.shims, readOnly: config.readOnly });
 }
 
 // This project's Claude state dir (sessions, settings, .claude.json). The pod can write anything in

@@ -417,11 +417,17 @@ test('shims: what runs on the host keeps the shims, never loops, dies by the sam
   let res = await s.shim('pnpm', ['-v'], { cwd: s.dir, env: { ...s.env, PATH: `${alias}:${s.env.PATH}` } });
   assert.equal(res.stdout, 'host-pnpm -v\n', res.stderr);
 
-  // Children of a host command see the shims (so a global tool's own `pnpm build` in an opted-in
-  // project still goes to a pod), minus relative entries.
-  fs.writeFileSync(path.join(s.dir, 'real', 'npm'), '#!/bin/sh\necho "$PATH"\n', { mode: 0o755 });
-  res = await s.shim('npm', ['x'], { cwd: s.dir, env: { ...s.env, PATH: `rel/bin:${s.env.PATH}` } });
-  assert.equal(res.stdout.trim(), s.env.PATH);
+  // In an opted-in project, children of a host command see the shims (so a global tool's own
+  // `pnpm build` still goes to a pod), minus relative entries. Elsewhere they don't: they'd only pay.
+  s.config({ shims: {} });
+  await trustConfig(s);
+  fs.writeFileSync(path.join(s.dir, 'real', 'node'), '#!/bin/sh\necho "$PATH"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(s.dir, 'tool.js'), '');
+  const stripped = s.env.PATH.split(':').slice(1).join(':');
+  res = await s.shim('node', [path.join(s.dir, 'tool.js')], { env: { ...s.env, PATH: `rel/bin:${s.env.PATH}` } });
+  assert.equal(res.stdout.trim(), s.env.PATH, res.stderr);
+  res = await s.shim('node', [path.join(s.dir, 'tool.js')], { cwd: s.dir, env: { ...s.env, PATH: `rel/bin:${s.env.PATH}` } });
+  assert.equal(res.stdout.trim(), stripped, res.stderr);
 
   // Killed by a signal: the shim dies by it too.
   fs.writeFileSync(path.join(s.dir, 'real', 'npm'), '#!/bin/sh\nkill -TERM $$\n', { mode: 0o755 });
@@ -463,4 +469,93 @@ test('shims: what runs on the host keeps the shims, never loops, dies by the sam
   res = await run('/bin/sh', ['-c', `cd '${gone}' && rmdir '${gone}' && '${path.join(s.shims, 'pnpm')}' -v`], { cwd: s.dir, env: s.env });
   assert.equal(res.code, 1);
   assert.match(res.stderr, /the current folder can't be read/);
+});
+
+test('shims: outside opted-in projects the launcher runs the real command without starting node', async () => {
+  const s = await setup();
+  // A launcher whose claude-pod is gone says so whenever it gets past the fast path.
+  const dir = path.join(s.dir, 'alt-shims');
+  fs.mkdirSync(dir);
+  const env = { ...s.env, PATH: s.env.PATH.replace(s.shims, dir) };
+  fs.writeFileSync(path.join(dir, 'pnpm'), shimScript('pnpm', { dir, shimJs: path.join(s.dir, 'gone.js'), index: path.join(s.hostDir, 'shims-opted') }), { mode: 0o700 });
+  const pnpm = (cwd) => run(path.join(dir, 'pnpm'), ['-v'], { cwd, env });
+
+  let res = await pnpm(s.dir);
+  assert.equal(res.stdout, 'host-pnpm -v\n');
+  assert.equal(res.stderr, '', 'fast path: no config, nothing opted in');
+  s.config({});
+  res = await pnpm(s.project);
+  assert.match(res.stderr, /is gone/, 'a config above: the shim decides');
+
+  // An opted-in project whose config is gone, reached through a symlink: still the slow path.
+  s.config({ shims: {} });
+  await trustConfig(s);
+  fs.rmSync(path.join(s.project, 'claude-pod.config.json'));
+  fs.mkdirSync(path.join(s.project, 'sub'));
+  fs.symlinkSync(s.project, path.join(s.dir, 'link-to-app'));
+  res = await pnpm(path.join(s.dir, 'link-to-app', 'sub'));
+  assert.match(res.stderr, /is gone/);
+  res = await s.shim('pnpm', ['install'], { cwd: path.join(s.dir, 'link-to-app', 'sub') });
+  assert.equal(res.code, 1);
+  assert.match(res.stderr, /is gone, and it had "shims"/);
+
+  // An index it can't read: the slow path.
+  fs.chmodSync(path.join(s.hostDir, 'shims-opted'), 0);
+  res = await pnpm(s.dir);
+  assert.match(res.stderr, /is gone/);
+  assert.doesNotMatch(res.stderr, /ermission denied/);
+  fs.chmodSync(path.join(s.hostDir, 'shims-opted'), 0o600);
+
+  // No index yet (approvals from before the shims): always the slow path.
+  fs.rmSync(path.join(s.hostDir, 'shims-opted'));
+  res = await pnpm(s.dir);
+  assert.match(res.stderr, /is gone/);
+});
+
+test('shims: a readOnly file a stale pod changed after you approved it is refused until you approve it again', async () => {
+  const s = await setup();
+  s.write('package.json', JSON.stringify({ scripts: { dev: 'echo ran' } }));
+  s.write('scripts/x.js', '');
+  s.config({ shims: { host: ['dev'] } });
+  await trustConfig(s);
+  // A pod started under that config (no readOnly) is running when you approve the next one.
+  const protect = await import('../src/protect.js');
+  const c = await import('../src/config.js');
+  await asHome(s, () => protect.recordPending(s.project, 'claude-pod-app-stale', [], { extra: [] }));
+  s.config({ readOnly: ['package.json', 'scripts'], shims: { host: ['dev'] } });
+  await trustConfig(s);
+  let res = await s.shim('pnpm', ['dev']);
+  assert.match(res.stderr, /not read-only for every pod/);
+
+  // It changes package.json, and respells the entry, which you approve, then it exits; or the entry
+  // leaves the list and comes back. The fingerprint you approved first still stands.
+  s.write('package.json', JSON.stringify({ scripts: { dev: 'echo pwned' } }));
+  s.config({ readOnly: ['Package.json', 'scripts'], shims: { host: ['dev'] } });
+  await trustConfig(s);
+  s.config({ readOnly: ['scripts'], shims: { host: ['dev'] } });
+  await trustConfig(s);
+  s.config({ readOnly: ['package.json', 'scripts'], shims: { host: ['dev'] } });
+  await trustConfig(s);
+  await asHome(s, () => protect.clearPending('claude-pod-app-stale'));
+  res = await s.shim('pnpm', ['dev']);
+  assert.equal(res.code, 1);
+  assert.equal(res.stdout, '');
+  assert.match(res.stderr, /package.json changed after you approved claude-pod.config.json, while a pod that could still write it was running/);
+  assert.match(res.stderr, /claude-pod trust/);
+  // scripts/ didn't change: it runs on the host, and stops being watched.
+  res = await s.shim('node', ['scripts/x.js']);
+  assert.equal(res.stdout, `host-node ${path.join(s.project, 'scripts', 'x.js')}\n`, res.stderr);
+  assert.deepEqual(await asHome(s, () => c.changedReadOnly(s.project, ['package.json', 'scripts'])), ['package.json']);
+  // Re-approving the config itself doesn't approve the file.
+  s.config({ readOnly: ['package.json', 'scripts'], shims: { host: ['dev'] }, env: {} });
+  await trustConfig(s);
+  assert.equal((await s.shim('pnpm', ['dev'])).code, 1);
+  // `claude-pod trust` asks about it; without a terminal it refuses.
+  res = await cli(['trust'], { cwd: s.project, env: s.env });
+  assert.equal(res.code, 1);
+  assert.match(res.stderr, /package.json changed while a pod that could write them was running/);
+  // What it does once you say yes.
+  await asHome(s, () => c.approveReadOnly(s.project, ['package.json']));
+  res = await s.shim('pnpm', ['dev']);
+  assert.equal(res.stdout, 'pwned\n');
 });

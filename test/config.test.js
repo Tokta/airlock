@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
-  assertSafeRoot, findProjectRoot, forgetShims, interpolate, isTrusted, loadConfig, optedIntoShims, shimsOffWarning, trust,
+  assertSafeRoot, findProjectRoot, forgetShims, interpolate, isTrusted, loadConfig, newReadOnly, optedIntoShims, shimsOffWarning, trust,
 } from '../src/config.js';
 import { parseDotenv } from '../src/dotenv.js';
 import { readRegularFile } from '../src/safefs.js';
@@ -190,6 +190,19 @@ test('shims opt-in: sticky in the trust record, a warning before approving a con
     // A config in a subfolder of an opted-in project: a pod of that project could have planted it.
     trust(root, 'h2', { shims: true });
     assert.match(shimsOffWarning(path.join(root, 'sub'), { shims: null }), /inside .*, which has them/);
+  } finally {
+    process.env.HOME = prev;
+  }
+});
+
+test('newReadOnly: the readOnly paths the last approved config did not have', () => {
+  const prev = process.env.HOME;
+  process.env.HOME = tmp();
+  try {
+    const root = tmp();
+    assert.deepEqual(newReadOnly(root, { readOnly: ['a'] }), ['a'], 'nothing approved yet');
+    trust(root, 'h1', { readOnly: ['scripts', 'Makefile'] });
+    assert.deepEqual(newReadOnly(root, { readOnly: ['Makefile', 'scripts', 'package.json'] }), ['package.json']);
   } finally {
     process.env.HOME = prev;
   }

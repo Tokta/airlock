@@ -59,7 +59,7 @@ export async function trustConfig(s) {
     const c = await import('../src/config.js');
     const found = c.findProjectRoot(s.project);
     const config = c.loadConfig(found);
-    c.trust(found.root, config.hash, { shims: !!config.shims });
+    c.trust(found.root, config.hash, { shims: !!config.shims, readOnly: config.readOnly });
   } finally {
     process.env.HOME = prev;
   }
