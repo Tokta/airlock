@@ -2,9 +2,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { protectedMounts, quarantineCreated, snapshotMissing } from '../src/protect.js';
+import {
+  beginRun, clearPending, nameAliased, protectedMounts, setFileFlags, quarantineCreated, recordPending, restoreChanged, snapshotFiles, snapshotMissing, sweepRecord,
+} from '../src/protect.js';
 import { createExclusive, kind, realpathLoose, writeFileAtomic } from '../src/safefs.js';
 import { tmp } from './helpers.js';
+
+// Host git reads your global config too: keep the real one out of these tests.
+process.env.HOME = tmp();
+delete process.env.XDG_CONFIG_HOME;
 
 function repo() {
   const root = tmp();
@@ -103,11 +109,66 @@ test('core.hooksPath pointing at .git/hooks or inside .claude is not mounted twi
   }
 });
 
-test('core.hooksPath is read from .git/config only, never from its includes', () => {
+test('an include that points into the project is refused, wherever it is spelled', () => {
+  for (const [section, value] of [['include', 'INC'], ['includeIf "gitdir:~/my work/"', '../inc'], ['include', 'config.local']]) {
+    const root = repo();
+    fs.writeFileSync(path.join(root, '.git', 'config'), `[${section}]\n\tpath = ${value}\n`);
+    assert.throws(() => protectedMounts(root), /includes .*inside the project/, value);
+  }
+  // A symlink in the project that points out can still be repointed by the pod.
+  const link = repo();
+  fs.symlinkSync(tmp(), path.join(link, 'gitdir'));
+  fs.writeFileSync(path.join(link, '.git', 'config'), `[include]\n\tpath = ${path.join(link, 'gitdir', 'x')}\n`);
+  assert.throws(() => protectedMounts(link), /inside the project/);
+});
+
+test('includes outside the project, or under a readOnly folder, are followed for core.hooksPath', () => {
   const root = repo();
-  fs.writeFileSync(path.join(root, 'inc'), '[core]\n\thooksPath = /etc\n');
-  fs.writeFileSync(path.join(root, '.git', 'config'), `[include]\n\tpath = ${path.join(root, 'inc')}\n`);
+  const outside = tmp();
+  fs.writeFileSync(path.join(outside, 'a'), `[include]\n\tpath = b\n`); // relative to a's folder
+  fs.writeFileSync(path.join(outside, 'b'), '[core]\n\thooksPath = .husky\n');
+  fs.mkdirSync(path.join(root, 'conf'));
+  fs.writeFileSync(path.join(root, 'conf', 'git'), '[core]\n\thooksPath = tools/hooks\n');
+  fs.writeFileSync(path.join(root, '.git', 'config'), `[includeIf "onbranch:main"]\n\tpath = ${path.join(outside, 'a')}\n[include]\n\tpath = ../conf/git\n`);
+  const { readOnly } = protectedMounts(root, ['conf']);
+  for (const rel of ['.husky', 'tools/hooks', 'conf']) assert.ok(readOnly.includes(path.join(root, rel)), rel);
+  // An include cycle ends.
+  fs.writeFileSync(path.join(outside, 'b'), `[include]\n\tpath = a\n`);
+  assert.doesNotThrow(() => protectedMounts(root, ['conf']));
+});
+
+test('core.hooksPath in .git/config.worktree is locked too', () => {
+  const root = repo();
+  fs.writeFileSync(path.join(root, '.git', 'config.worktree'), '[core]\n\thooksPath = .wt-hooks\n');
+  assert.ok(protectedMounts(root).readOnly.includes(path.join(root, '.wt-hooks')));
+});
+
+test('in a monorepo subfolder, the repo above is read for core.hooksPath', () => {
+  const top = repo();
+  const root = path.join(top, 'apps', 'web');
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(top, '.git', 'config'), '[core]\n\thooksPath = apps/web/.githooks\n');
+  const { readOnly } = protectedMounts(root);
+  assert.ok(readOnly.includes(path.join(root, '.githooks')), readOnly.join(','));
+  // Hooks at the top of the repo are outside every pod: nothing to lock, nothing to refuse.
+  fs.writeFileSync(path.join(top, '.git', 'config'), '[core]\n\thooksPath = .githooks\n');
   assert.doesNotThrow(() => protectedMounts(root));
+  assert.ok(!fs.existsSync(path.join(top, '.githooks')), 'not created above the project');
+  // Outside the repo too: the repo above (a home-folder dotfiles repo, say) is not this project's.
+  fs.writeFileSync(path.join(top, '.git', 'config'), `[core]\n\thooksPath = ${tmp()}\n`);
+  assert.doesNotThrow(() => protectedMounts(root));
+  fs.writeFileSync(path.join(top, '.git', 'config'), '[include]\n\tpath = ../apps/web/inc\n');
+  assert.throws(() => protectedMounts(root), /inside the project/);
+});
+
+test('a protected file with a second hard link is refused', () => {
+  const root = repo();
+  fs.linkSync(path.join(root, '.git', 'config'), path.join(root, 'twin'));
+  assert.throws(() => protectedMounts(root), /2 hard links/);
+  const extra = repo();
+  fs.writeFileSync(path.join(extra, 'Makefile'), '');
+  fs.linkSync(path.join(extra, 'Makefile'), path.join(extra, 'twin'));
+  assert.throws(() => protectedMounts(extra, ['Makefile']), /hard links/);
 });
 
 test('core.hooksPath that is a symlink, or goes through one, is refused', () => {
@@ -254,4 +315,282 @@ test('readOnly paths spelled in another case land on the same mount (case-insens
   const { pinned, readOnly } = protectedMounts(root, ['SCRIPTS', 'scripts/ci/deploy.sh', '.CLAUDE/x']);
   assert.deepEqual(readOnly.filter((m) => m.toLowerCase().includes('scripts')), [path.join(root, 'scripts')]);
   assert.ok(!pinned.some((p) => p.toLowerCase().includes('scripts') || p.toLowerCase().includes('.claude')), pinned.join(','));
+});
+
+test('a missing folder above a readOnly entry is quarantined under a message naming the entry', (t) => {
+  const root = repo();
+  const missing = snapshotMissing(root, ['infra/prod.sh']);
+  fs.mkdirSync(path.join(root, 'infra'));
+  const warnings = [];
+  t.mock.method(process.stderr, 'write', (m) => { warnings.push(String(m)); return true; });
+  quarantineCreated(root, missing, ['infra/prod.sh']);
+  t.mock.restoreAll();
+  assert.match(warnings.join(''), /created infra\/ \(which holds infra\/prod\.sh, listed in "readOnly"\)/);
+});
+
+// Read-only files on a case-insensitive file system: snapshot at launch, put back after the run.
+// These run under a throwaway HOME, since the copies live in host-only state.
+function withHome(t) {
+  const prev = process.env.HOME;
+  process.env.HOME = tmp();
+  t.after(() => { process.env.HOME = prev; });
+}
+const always = () => true;
+const quiet = (t) => t.mock.method(process.stderr, 'write', () => true);
+
+test('nameAliased tells a case-insensitive file system from a case-sensitive one', (t) => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'config'), '');
+  const insensitive = kind(path.join(dir, 'CONFIG')) !== 'missing';
+  assert.equal(nameAliased(path.join(dir, 'config')), insensitive);
+  fs.writeFileSync(path.join(dir, '123'), '');
+  if (process.platform !== 'darwin' || !insensitive) return;
+  assert.equal(nameAliased(path.join(dir, '123')), false, 'no letters, no other spelling');
+});
+
+test('a read-only file changed during the run is put back, and the changed one kept', (t) => {
+  withHome(t);
+  quiet(t);
+  const root = repo();
+  const config = path.join(root, '.git', 'config');
+  const script = path.join(root, 'deploy.sh');
+  fs.writeFileSync(script, 'echo deploy\n', { mode: 0o755 });
+  fs.chmodSync(script, 0o755);
+  const files = snapshotFiles(root, [config, script, path.join(root, '.claude')], 'pod-a', always);
+  assert.equal(files.length, 2, 'folders are not snapshotted');
+  assert.deepEqual(restoreChanged(root, files), [], 'unchanged: nothing to do');
+
+  fs.appendFileSync(config, '[core]\n\tfsmonitor = evil\n');
+  fs.rmSync(script);
+  fs.symlinkSync('/etc/passwd', script);
+  assert.deepEqual(restoreChanged(root, files).sort(), [config, script].sort());
+  assert.equal(fs.readFileSync(config, 'utf8'), '[core]\n');
+  assert.equal(kind(script), 'file');
+  assert.equal(fs.statSync(script).mode & 0o777, 0o755, 'mode restored');
+  const kept = fs.readdirSync(path.join(root, '.git')).filter((f) => f.startsWith('config.claude-pod-quarantine-'));
+  assert.equal(kept.length, 1);
+  assert.match(fs.readFileSync(path.join(root, '.git', kept[0]), 'utf8'), /fsmonitor = evil/);
+  assert.ok(fs.readFileSync('/etc/passwd', 'utf8').length > 0, 'symlink target untouched');
+});
+
+test('a deleted, hard-linked or chmod-ed read-only file is put back', (t) => {
+  withHome(t);
+  quiet(t);
+  const root = repo();
+  const p = path.join(root, '.mcp.json');
+  fs.writeFileSync(p, '{}');
+  fs.chmodSync(p, 0o644);
+  const files = snapshotFiles(root, [p], 'pod-b', always);
+  fs.rmSync(p);
+  assert.deepEqual(restoreChanged(root, files), [p]);
+  assert.equal(fs.readFileSync(p, 'utf8'), '{}');
+  fs.linkSync(p, path.join(root, 'twin'));
+  assert.deepEqual(restoreChanged(root, files), [p]);
+  assert.equal(fs.lstatSync(p).nlink, 1);
+  fs.chmodSync(p, 0o4755);
+  assert.deepEqual(restoreChanged(root, files), [p]);
+  assert.equal(fs.statSync(p).mode & 0o7777, 0o644);
+});
+
+test('nothing is written through a parent folder swapped for a symlink, or from a bad record', (t) => {
+  withHome(t);
+  quiet(t);
+  const root = repo();
+  fs.mkdirSync(path.join(root, 'scripts'));
+  const p = path.join(root, 'scripts', 'x.sh');
+  fs.writeFileSync(p, 'ok');
+  const files = snapshotFiles(root, [p], 'pod-c', always);
+  const host = tmp();
+  fs.renameSync(path.join(root, 'scripts'), path.join(root, 'old'));
+  fs.symlinkSync(host, path.join(root, 'scripts'));
+  assert.deepEqual(restoreChanged(root, files), []);
+  assert.deepEqual(fs.readdirSync(host), []);
+  // Paths outside the project, or a backup outside host-only state, are ignored.
+  const outside = path.join(tmp(), 'victim');
+  fs.writeFileSync(outside, 'mine');
+  assert.deepEqual(restoreChanged(root, [{ ...files[0], path: outside }]), []);
+  assert.deepEqual(restoreChanged(root, [{ ...files[0], backup: outside }]), []);
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'mine');
+});
+
+test('a second pod takes the first one\'s launch copy, not a version the first pod changed', (t) => {
+  withHome(t);
+  quiet(t);
+  const root = repo();
+  const config = path.join(root, '.git', 'config');
+  const a = snapshotFiles(root, [config], 'pod-1', always);
+  recordPending(root, 'pod-1', [], { files: a });
+  fs.writeFileSync(config, '[core]\n\tfsmonitor = evil\n'); // pod 1 writes it through .git/CONFIG
+  const b = snapshotFiles(root, [config], 'pod-2', always);
+  recordPending(root, 'pod-2', [], { files: b });
+  assert.equal(b[0].sha256, a[0].sha256);
+  sweepRecord('pod-2'); // pod 2 ends first
+  assert.equal(fs.readFileSync(config, 'utf8'), '[core]\n');
+  clearPending('pod-1');
+  assert.ok(!fs.existsSync(path.dirname(a[0].backup)), 'copies removed with the record');
+});
+
+test('sweepRecord puts back changed files for a launcher that died', (t) => {
+  withHome(t);
+  quiet(t);
+  const root = repo();
+  const config = path.join(root, '.git', 'config');
+  const files = snapshotFiles(root, [config], 'pod-x', always);
+  recordPending(root, 'pod-x', [], { files });
+  fs.writeFileSync(config, 'evil');
+  sweepRecord('pod-x');
+  assert.equal(fs.readFileSync(config, 'utf8'), '[core]\n');
+});
+
+test('on a case-sensitive file system nothing is snapshotted', (t) => {
+  withHome(t);
+  const root = repo();
+  assert.deepEqual(snapshotFiles(root, [path.join(root, '.git', 'config')], 'pod-s', () => false), []);
+});
+
+// A stand-in for chflags: a set of locked paths, so tests never leave undeletable files.
+function fakeFlags(t, { fail = [] } = {}) {
+  const set = new Set();
+  const impl = {
+    supported: true,
+    set,
+    locked: (p) => set.has(p),
+    lock: (p) => !fail.includes(p) && !!set.add(p),
+    unlock: (p) => set.delete(p) || true,
+  };
+  const prev = setFileFlags(impl);
+  t.after(() => setFileFlags(prev));
+  return impl;
+}
+
+test('beginRun locks read-only files once for all pods; the last pod to end unlocks them', (t) => {
+  withHome(t);
+  quiet(t);
+  const f = fakeFlags(t);
+  const root = repo();
+  const config = path.join(root, '.git', 'config');
+  if (!nameAliased(config)) return t.skip('case-sensitive file system: nothing to lock');
+  const a = beginRun(root, 'pod-a', { missing: [], readOnly: [config], extra: [] });
+  assert.deepEqual(a.locked, [config]);
+  assert.ok(f.set.has(config));
+  const b = beginRun(root, 'pod-b', { missing: [], readOnly: [config], extra: [] });
+  assert.deepEqual(b.locked, [config], 'held by both');
+  sweepRecord('pod-a');
+  assert.ok(f.set.has(config), 'pod-b still runs');
+  sweepRecord('pod-b');
+  assert.ok(!f.set.has(config), 'unlocked by the last one');
+});
+
+test('beginRun leaves a file you made immutable yourself, and refuses when it cannot lock', (t) => {
+  withHome(t);
+  quiet(t);
+  const root = repo();
+  const config = path.join(root, '.git', 'config');
+  const mcp = path.join(root, '.mcp.json');
+  fs.writeFileSync(mcp, '{}');
+  if (!nameAliased(config)) return t.skip('case-sensitive file system: nothing to lock');
+  const f = fakeFlags(t, { fail: [mcp] });
+  f.set.add(config); // yours
+  assert.throws(() => beginRun(root, 'pod-a', { missing: [], readOnly: [config, mcp], extra: [] }), /Could not make .*\.mcp\.json immutable/);
+  assert.ok(f.set.has(config), 'still yours');
+  assert.equal(kind(path.join(process.env.HOME, '.config', 'claude-pod', 'pending', 'pod-a.json')), 'missing', 'no record left');
+  f.set.delete(config);
+  const run = beginRun(root, 'pod-b', { missing: [], readOnly: [config], extra: [] });
+  assert.deepEqual(run.locked, [config]);
+  sweepRecord('pod-b');
+});
+
+test('a file another running pod found missing is not taken as yours by a second pod', (t) => {
+  withHome(t);
+  quiet(t);
+  const f = fakeFlags(t);
+  const root = repo();
+  const mcp = path.join(root, '.mcp.json');
+  beginRun(root, 'pod-a', { missing: snapshotMissing(root), readOnly: [], extra: [] });
+  fs.writeFileSync(mcp, '{"mcpServers":{"x":{"command":"evil"}}}'); // pod A plants it
+  const b = beginRun(root, 'pod-b', { missing: snapshotMissing(root), readOnly: protectedMounts(root).readOnly, extra: [] });
+  assert.ok(b.missing.includes('.mcp.json'), 'pod B quarantines it too');
+  assert.ok(!b.files.some((x) => x.path === mcp) && !f.set.has(mcp), 'neither copied nor locked');
+  sweepRecord('pod-a');
+  sweepRecord('pod-b');
+  assert.equal(kind(mcp), 'missing', 'quarantined, not put back');
+});
+
+test('a folder at a predictable quarantine name does not stop the restore', (t) => {
+  withHome(t);
+  quiet(t);
+  const root = repo();
+  const config = path.join(root, '.git', 'config');
+  const files = snapshotFiles(root, [config], 'pod-q', always);
+  fs.writeFileSync(config, '[core]\n\tfsmonitor = evil\n');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.mkdirSync(path.join(root, '.git', `config.claude-pod-quarantine-${stamp}`, 'x'), { recursive: true });
+  assert.deepEqual(restoreChanged(root, files), [config]);
+  assert.equal(fs.readFileSync(config, 'utf8'), '[core]\n');
+});
+
+test('in a linked worktree, the .git file is locked and the main repo config is read', () => {
+  const main = repo();
+  const wt = tmp();
+  const gitDir = path.join(main, '.git', 'worktrees', 'wt');
+  fs.mkdirSync(gitDir, { recursive: true });
+  fs.writeFileSync(path.join(gitDir, 'commondir'), '../..\n');
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${gitDir}\n`);
+  fs.writeFileSync(path.join(main, '.git', 'config'), '[core]\n\thooksPath = .husky/_\n');
+  const { readOnly } = protectedMounts(wt);
+  assert.ok(readOnly.includes(path.join(wt, '.git')), 'the .git file');
+  assert.ok(readOnly.includes(path.join(wt, '.husky', '_')), readOnly.join(','));
+  // A .git file pointing into the project would let the pod write its hooks.
+  const inside = tmp();
+  fs.mkdirSync(path.join(inside, '.bare'));
+  fs.writeFileSync(path.join(inside, '.git'), 'gitdir: ./.bare\n');
+  assert.throws(() => protectedMounts(inside), /inside the project/);
+});
+
+test('a relative core.hooksPath in your global git config is locked inside the project', (t) => {
+  const prev = process.env.HOME;
+  process.env.HOME = tmp();
+  t.after(() => { process.env.HOME = prev; });
+  fs.writeFileSync(path.join(process.env.HOME, '.gitconfig'), '[core]\n\thooksPath = .githooks\n');
+  const root = repo();
+  assert.ok(protectedMounts(root).readOnly.includes(path.join(root, '.githooks')));
+  // An absolute global hooks folder outside the project is yours: not refused.
+  fs.writeFileSync(path.join(process.env.HOME, '.gitconfig'), `[core]\n\thooksPath = ${tmp()}\n`);
+  assert.doesNotThrow(() => protectedMounts(repo()));
+});
+
+test('an include spelled in another case is still seen as inside the project', (t) => {
+  const root = repo();
+  if (kind(root.toUpperCase()) === 'missing') return t.skip('case-sensitive file system');
+  fs.writeFileSync(path.join(root, '.git', 'config'), `[include]\n\tpath = ${root.toUpperCase()}/tools/git.inc\n`);
+  assert.throws(() => protectedMounts(root), /inside the project/);
+});
+
+test('a file another record claims is locked again if you unlocked it since', (t) => {
+  withHome(t);
+  quiet(t);
+  const f = fakeFlags(t);
+  const root = repo();
+  const config = path.join(root, '.git', 'config');
+  if (!nameAliased(config)) return t.skip('case-sensitive file system: nothing to lock');
+  beginRun(root, 'pod-a', { missing: [], readOnly: [config], extra: [] });
+  f.set.delete(config); // `chflags nouchg` by hand, pod-a's record still there
+  beginRun(root, 'pod-b', { missing: [], readOnly: [config], extra: [] });
+  assert.ok(f.set.has(config));
+  sweepRecord('pod-a');
+  sweepRecord('pod-b');
+  assert.ok(!f.set.has(config));
+});
+
+test('global git config: GIT_CONFIG_GLOBAL is read, and a value under a missing .vscode is left to quarantine', (t) => {
+  const g = path.join(tmp(), 'gitconfig');
+  fs.writeFileSync(g, '[core]\n\thooksPath = .vscode/hooks\n');
+  const prev = process.env.GIT_CONFIG_GLOBAL;
+  process.env.GIT_CONFIG_GLOBAL = g;
+  t.after(() => { if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = prev; });
+  const root = repo();
+  assert.doesNotThrow(() => protectedMounts(root));
+  assert.equal(kind(path.join(root, '.vscode')), 'missing');
+  fs.writeFileSync(g, '[core]\n\thooksPath = .githooks\n');
+  assert.ok(protectedMounts(root).readOnly.includes(path.join(root, '.githooks')));
 });

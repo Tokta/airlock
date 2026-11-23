@@ -170,17 +170,25 @@ Some project files are executed or loaded by tools on your host later. A pod mus
 | `.git/hooks/` | run by git on commit/push | read-only (created if missing) |
 | `.git/config` | `core.fsmonitor` runs on `git status`; hooksPath, filters, aliases | read-only |
 | `.git/config.worktree` | overrides `.git/config` once `git sparse-checkout` turns `extensions.worktreeConfig` on | read-only if present; quarantined if created |
-| the folder `core.hooksPath` names (e.g. `.githooks/`) | run by git on commit/push instead of `.git/hooks/` | read-only (created if missing); pod refuses to start if it is a symlink, outside the project, or the project itself. Only that folder is locked: a hook that calls other project files (husky's `.husky/_` stubs run `.husky/<hook>`) still runs whatever the pod wrote there |
+| the folder `core.hooksPath` names (e.g. `.githooks/`) | run by git on commit/push instead of `.git/hooks/` | read-only (created if missing); pod refuses to start if it is a symlink, outside the project, or the project itself. Every value counts: from `.git/config`, `.git/config.worktree`, your global and system git config and the files they include, and from the repo above when the project is a folder of a monorepo. A relative value in your global config (`core.hooksPath = .githooks`) applies to every repo, so that folder is created and locked in every project you launch. Only that folder is locked: a hook that calls other project files (husky's `.husky/_` stubs run `.husky/<hook>`) still runs whatever the pod wrote there |
 | `.claude/` | settings, hooks, agents of the Claude session orchestrating from the host | read-only (created if missing) |
 | `.mcp.json` | MCP servers started by host Claude | read-only if present, quarantined if a pod creates it |
 | `.envrc` | run by direnv on `cd` | read-only if present, quarantined if created |
 | `.vscode/`, `.idea/` | editor tasks and settings | read-only if present, quarantined if created |
 | `.git` itself | could be swapped for a fresh repo with its own hooks | mounted as its own mount point, so it can't be moved or replaced |
+| a file `.git/config` (or your global git config) includes (`[include]`, `[includeIf]`) | host git reads it like `.git/config` | pod refuses to start if it is inside the project, unless it is one of the read-only paths in this table or under one |
+| `.git` as a file, when the project itself is a linked worktree or a submodule | says where git reads hooks and config | read-only; pod refuses to start if it points inside the project. The main repo's config is read for `core.hooksPath`. This covers the project's own `.git` file only, not the submodules inside it (see below) |
 | `.git/commondir` | redirects where git reads config and hooks | pod refuses to start if present; quarantined if created |
 | `.git` (in a non-git project) | a new repo with hooks | quarantined if created |
 | paths in the config's `readOnly` (e.g. `scripts/`, `package.json`, `Makefile`) | scripts you run on the host | read-only if present, quarantined if created (a missing folder is quarantined whole); the folders above it are mount points, so they can't be swapped either; pod refuses to start if one is a symlink or is reached through one |
 
 "Quarantined" means renamed to `<name>.claude-pod-quarantine-<timestamp>` after the run, with a warning. This also happens when the launcher is killed or crashes (the watchdog does it). If the watchdog can't run either (power loss, a harness that kills every process of the session), the next launch in that project does it before anything else — so until then the planted file is still there, and files you create yourself in that project in the meantime get quarantined too (renamed, never deleted). `claude-pod doctor` lists such interrupted runs. The same goes for a missing `readOnly` path that you create yourself during a run (a `git pull` that adds a `Makefile`, say): it is renamed at the end too.
+
+**macOS: read-only files are locked while a pod runs.** On a case-insensitive file system a pod can write a read-only *file* through another spelling of its name (`.git/CONFIG`, `.MCP.json`); folders are not affected. So for the length of the run claude-pod also makes each such file (`.git/config`, `.mcp.json`, `.envrc`, a worktree's `.git` file, `readOnly` files) immutable (`chflags uchg`). No pod can write, rename, delete or hard-link it then, and neither can host tools, **including yours**: while any pod of the project runs, `git push -u`, `git remote add`, `git config`, `claude mcp add`, or saving a listed `package.json` in your editor fail with "Operation not permitted". The launch prints which files are locked. They are unlocked when the last running pod of the project exits, or by the watchdog if the launcher is killed. If both die (power loss), the next launch in that project unlocks them, or run `chflags nouchg <file>`. A file you made immutable yourself is left as it is.
+
+As a second line, each of those files is also copied to `~/.config/claude-pod/` at launch. If it still changed, is gone, has a second hard link or a new mode after the run, the copy is put back and the changed one is kept as `<name>.claude-pod-quarantine-<timestamp>-<random>`, with a warning. On Linux the read-only mount is enough, and none of this happens.
+
+A protected file with a second hard link stops the pod from starting: the other name is writable.
 
 A file in `readOnly` is mounted as it was at launch. If a host tool replaces it by writing a new file and renaming it (many editors, `npm install` on `package.json`), a running pod keeps the old version until it restarts. A pod can't change a listed `package.json` at all, so `pnpm add` fails there; leave it out if pods should add dependencies. If any of these paths is a symlink, or resolves outside the project, the pod doesn't start: something planted it.
 
@@ -189,7 +197,7 @@ Git inside the pod still works for commits (identity comes from your global `use
 ### What is still exposed
 
 - **Everything else in the project**, read-write: source, `.env`, test configs, nested folders, and `package.json` scripts, `Makefile` and the like unless you list them under `readOnly`. **Review the diff before running project scripts on your host** (`npm test`, `make`, …) — a hostile pod can put anything in them, or in the files they call.
-- **Git beyond the top-level hooks and config.** The pod can write the git index and create nested repositories in subfolders (which the index can register as submodules), and host git reads their settings too. After an unattended run, inspect with hooks and fsmonitor off until you've reviewed the changes — see [After an unattended run](../INTEGRATION.md#after-an-unattended-run).
+- **Git beyond the top-level hooks and config.** The pod can write the git index and create nested repositories in subfolders (which the index can register as submodules), and host git reads their settings too. The same goes for existing submodules and linked worktrees: their config and hooks under `.git/modules/` and `.git/worktrees/`, and each submodule's `.git` file, are pod-writable, and a host `git status` runs a submodule's `core.fsmonitor`. After an unattended run, inspect with hooks and fsmonitor off until you've reviewed the changes — see [After an unattended run](../INTEGRATION.md#after-an-unattended-run).
 - **The network.** Outbound is open by default, so a pod can send the project (and the login token) anywhere. `"network": "none"` or `NET=none` cuts it, but also takes Claude offline.
 - **The login token** — see [Login](#login).
 - **This project's pod history** in `~/.claude-pod/pods/<project>/`: a pod can read and alter its own project's past sessions and Claude settings.
@@ -213,7 +221,7 @@ PIDS=512 claude-pod            # lower the process cap
 - `~/.claude-pod/pods/` — one Claude state dir per project (sessions, settings).
 - The `claude-pod` Docker image (~700 MB), the `node:24-slim` base, and build cache.
 - The global `claude-pod` command (a symlink created by `npm install -g`).
-- In the project: an empty `.claude/` and `.git/hooks/` if they were missing, and any quarantined files.
+- In the project: an empty `.claude/` and `.git/hooks/` if they were missing, and any quarantined files. On macOS, while a pod runs, the immutable flag on its read-only files (see above).
 - While running: one container per pod, one watchdog process, and published ports on `127.0.0.1`.
 
 No `sudo`, no writes to your existing `~/.claude/`, shell rc files, or system paths.

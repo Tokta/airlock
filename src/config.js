@@ -29,7 +29,9 @@ function findUp(start, test) {
 //   2. else the nearest git root (`.git` dir, or file for worktrees/submodules),
 //   3. else the cwd itself (rejected later by assertSafeRoot unless it's a project).
 export function findProjectRoot(cwd = process.cwd()) {
-  const real = fs.realpathSync(cwd);
+  // .native spells each part as on disk: on macOS `MyApp` and `myapp` are one project, and must
+  // share one trust record, one state dir and one set of locks.
+  const real = fs.realpathSync.native(cwd);
   const withConfig = findUp(real, (d) => kind(path.join(d, CONFIG_FILE)) !== 'missing');
   if (withConfig) return { root: withConfig, configPath: path.join(withConfig, CONFIG_FILE) };
   const gitRoot = findUp(real, (d) => kind(path.join(d, '.git')) !== 'missing');

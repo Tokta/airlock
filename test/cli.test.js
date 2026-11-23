@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { dockerfileHash } from '../src/docker.js';
+import { kind } from '../src/safefs.js';
 import { cli, sandbox, trustConfig } from './helpers.js';
 
 const TOKEN = 'sk-ant-oat01-TESTTESTTESTTESTTEST';
@@ -258,4 +259,18 @@ test('usage errors', async () => {
   assert.equal((await cli(['run', '--bogus'], { cwd: s.project, env: s.env })).code, 2);
   assert.equal((await cli(['exec'], { cwd: s.project, env: s.env })).code, 1);
   assert.equal((await cli(['trust'], { cwd: s.project, env: s.env })).code, 1);
+});
+
+test('on macOS read-only files are immutable while the pod runs, and unlocked after', async (t) => {
+  const s = ready();
+  const config = path.join(s.project, '.git', 'config');
+  if (process.platform !== 'darwin' || kind(path.join(s.project, '.git', 'CONFIG')) === 'missing') return t.skip('macOS only');
+  // The fake pod writes the host file directly, as Docker Desktop does for `.git/CONFIG`.
+  const res = await cli(['exec', 'true'], { cwd: s.project, env: { ...s.env, FAKE_APPEND: `${config}\n\tfsmonitor = evil\n` } });
+  assert.equal(res.code, 0, res.stderr);
+  assert.match(res.stderr, /fake-append:EPERM/);
+  assert.match(res.stderr, /locked until the pod exits.*\.git\/config/);
+  assert.equal(fs.readFileSync(config, 'utf8'), '[core]\n');
+  fs.appendFileSync(config, '# host edit after the run\n'); // unlocked again
+  assert.deepEqual(fs.readdirSync(path.join(s.home, '.config', 'claude-pod', 'pending')), [], 'record and copies removed');
 });

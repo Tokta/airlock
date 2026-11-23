@@ -11,7 +11,7 @@ import { podsDir, projectStateDir, runDir, stateRoot } from './paths.js';
 import { allocatePorts } from './ports.js';
 import { canPrompt, confirm } from './prompt.js';
 import {
-  clearPending, protectedMounts, quarantineCreated, recordPending, snapshotMissing, sweepPending,
+  beginRun, protectedMounts, snapshotMissing, sweepPending, sweepRecord,
 } from './protect.js';
 import { ensurePrivateDir, isInside, kind, writeFileAtomic } from './safefs.js';
 import { CliError, bold, clean, detail, info, warn } from './ui.js';
@@ -176,12 +176,16 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   for (const { container, host } of ports) detail(`port ${container} → http://127.0.0.1:${host}`);
   if (mode === 'shell') detail(`login: none in this pod, so \`claude\` here is not logged in; use ${bold('claude-pod claude')}`);
 
-  const missingBefore = snapshotMissing(root, config.readOnly, readOnly);
-  recordPending(root, name, missingBefore);
+  // The watchdog first: from the moment files are locked, something must be there to unlock them
+  // if this launcher dies (Ctrl-C now, a crash). With no record yet it has nothing to sweep.
   const watchdog = spawn(process.execPath, [WATCHDOG, name, priv], { detached: true, stdio: ['pipe', 'ignore', 'ignore'] });
   watchdog.stdin.on('error', () => {});
   watchdog.stdin.unref?.();
   watchdog.unref();
+  const run = beginRun(root, name, { missing: snapshotMissing(root, config.readOnly, readOnly), readOnly, extra: config.readOnly });
+  if (run.locked.length) {
+    detail(`locked until the pod exits (host edits to them fail meanwhile): ${run.locked.map((p) => clean(path.relative(root, p))).join(', ')}`);
+  }
 
   // Forward signals to the docker client, whose sig-proxy passes them to the pod, and keep running
   // until docker exits. Signals may target the launcher alone (an agent harness killing its
@@ -200,8 +204,20 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
     for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.removeListener(sig, onSignal);
     if (typeof io[0] === 'number' && stdinText !== null) fs.closeSync(io[0]);
     fs.rmSync(priv, { recursive: true, force: true });
-    watchdog.stdin.end('done');
-    quarantineCreated(root, missingBefore);
-    clearPending(name);
+    // The docker client can die while its container runs on (killed alone, out of memory).
+    // Unlocking or restoring then would hand the files back to a live pod: leave that to the
+    // watchdog, which stops the container first.
+    try {
+      docker(['rm', '-f', name], { stdio: 'ignore' });
+    } catch {
+      // containerExists answers "yes" when Docker can't be asked
+    }
+    if (containerExists(name)) {
+      warn(`${name} may still be running. The watchdog stops it, then unlocks and checks its files.`);
+      watchdog.stdin.end();
+    } else {
+      sweepRecord(name);
+      watchdog.stdin.end('done');
+    }
   }
 }

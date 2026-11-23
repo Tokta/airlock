@@ -69,7 +69,7 @@ more paths to lock:
 - Test in [test/protect.test.js](../test/protect.test.js): an existing file and dir are mounted
   `:ro`; a symlink is refused; a missing one a pod creates is quarantined.
 
-## Batch 2b — gaps the batch 1 and 2 reviews found (do before batch 3)
+## [DONE] Batch 2b — gaps the batch 1 and 2 reviews found (do before batch 3)
 
 - **Case-insensitive host defeats every file-type read-only mount (critical; existed before
   batch 2).** On macOS Docker Desktop, `echo x >> .git/CONFIG` or `> .MCP.json` from a pod
@@ -80,6 +80,10 @@ more paths to lock:
   host-only pending record, checked in `quarantineCreated` and `sweepRecord`; restore from a
   host-only copy and warn), or mount the parent folder instead where that is possible. Prove the
   fix in real Docker on macOS.
+  **Chosen (with the user):** those files are made immutable (`chflags uchg`) while any pod of the
+  project runs, refcounted across pods and cleared by the watchdog or the next launch after a
+  crash; host edits to them fail meanwhile. The before/after copy-and-restore stays as a second
+  line. Proven in Docker: alias writes, renames and hard links get EPERM.
 - `[include]` in `.git/config` pointing at a pod-writable file: host git follows it, our
   hooksPath read does not. Refuse (or warn) when an include target is inside the project.
 - Project root in a subfolder of a git repo (monorepo): the hooksPath check never runs. Look

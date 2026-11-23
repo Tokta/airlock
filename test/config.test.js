@@ -113,3 +113,10 @@ test('trust records are per project and per exact content', () => {
     process.env.HOME = prev;
   }
 });
+
+test('project root is spelled as on disk, so another case is the same project', (t) => {
+  const dir = tmp();
+  fs.mkdirSync(path.join(dir, 'MyApp', '.git'), { recursive: true });
+  if (!fs.existsSync(path.join(dir, 'myapp'))) return t.skip('case-sensitive file system');
+  assert.equal(findProjectRoot(path.join(dir, 'myapp')).root, path.join(dir, 'MyApp'));
+});

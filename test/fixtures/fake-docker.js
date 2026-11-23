@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Stand-in for the docker CLI in tests: the suite puts a `docker` symlink to this file first on
 // PATH. Answers the launcher's probes, and for `run` records its argv, the --env-file contents and
-// its own environment, echoes stdin to stdout, and exits with FAKE_EXIT.
+// its own environment, appends FAKE_APPEND's text to its file (`<file>\n<text>`, standing in for a
+// pod writing it), echoes stdin to stdout, and exits with FAKE_EXIT.
 import fs from 'node:fs';
 
 const args = process.argv.slice(2);
@@ -27,6 +28,15 @@ if (cmd !== 'run') process.exit(0);
 
 const envFile = args[args.indexOf('--env-file') + 1];
 record({ args, envFile: args.includes('--env-file') ? fs.readFileSync(envFile, 'utf8') : null, clientEnvPath: process.env.PATH });
+
+if (process.env.FAKE_APPEND) {
+  const [file, text] = process.env.FAKE_APPEND.split('\n');
+  try {
+    fs.appendFileSync(file, text);
+  } catch (e) {
+    process.stderr.write(`fake-append:${e.code}\n`);
+  }
+}
 
 let input = '';
 try {

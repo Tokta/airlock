@@ -60,6 +60,7 @@ export function writeFileAtomic(file, content, mode = 0o600) {
   const fd = fs.openSync(tmp, 'wx', mode);
   try {
     fs.writeSync(fd, content);
+    fs.fchmodSync(fd, mode); // exact mode, whatever the umask
   } finally {
     fs.closeSync(fd);
   }
