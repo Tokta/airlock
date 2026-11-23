@@ -10,7 +10,8 @@ export const UNINSTALL_HELP = `Usage: claude-pod uninstall [--yes]
 
 Removes the '${IMAGE}' image, the pods' state (~/.claude-pod: session history, package caches) and the host-only
 state (~/.config/claude-pod: login token, trusted configs).
-Does not remove the claude-pod command itself: run \`npm uninstall -g claude-pod\` for that.`;
+Does not remove the claude-pod command itself (\`npm uninstall -g claude-pod\`), or keychain
+secrets stored with \`claude-pod secret set\` (remove those with \`claude-pod secret rm\`).`;
 
 // Pods can leave folders without write permission in their state (a package cache, say), which
 // rmSync can't empty. Make every real folder owner-writable (never following a symlink), then

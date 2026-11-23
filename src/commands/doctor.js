@@ -5,6 +5,7 @@ import { docker, imageStatus } from '../docker.js';
 import { readToken } from '../host.js';
 import { IMAGE, hostDir, projectStateDir, stateRoot, tokenPath } from '../paths.js';
 import { containerExists } from '../launch.js';
+import { hasSecret, supported } from '../keychain.js';
 import { listOrphans } from '../protect.js';
 import { kind } from '../safefs.js';
 import { bold, err, info, ok, warn } from '../ui.js';
@@ -90,6 +91,20 @@ export async function doctor(argv) {
         ok(`ports: ${list.join(', ')}`);
       }
       if (Object.keys(config.env).length) ok(`env: ${Object.keys(config.env).join(', ')}`);
+      if (config.secrets.length) {
+        if (!supported()) warn('secrets: keychain secrets are macOS-only for now; pods start without them');
+        else if (!isTrusted(found.root, config.hash)) warn('secrets: not checked until the config is trusted');
+        else {
+          for (const name of config.secrets) {
+            try {
+              if (hasSecret(found.root, name)) ok(`secret ${name}: stored (shell and exec pods only)`);
+              else warn(`secret ${name}: missing — run ${bold(`claude-pod secret set ${name}`)}`);
+            } catch (e) {
+              fail(`secret ${name}: ${e.message}`);
+            }
+          }
+        }
+      }
     }
   } catch (e) {
     fail(e.message);

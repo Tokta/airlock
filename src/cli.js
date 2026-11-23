@@ -7,6 +7,7 @@ import { guide } from './commands/guide.js';
 import { init } from './commands/init.js';
 import { ps, stop } from './commands/pods.js';
 import { run } from './commands/run.js';
+import { secret } from './commands/secret.js';
 import { trustCommand } from './commands/trust.js';
 import { uninstall } from './commands/uninstall.js';
 import { launch } from './launch.js';
@@ -32,6 +33,7 @@ Setup & management:
   auth                    store the login token from \`claude setup-token\`
   init                    create claude-pod.config.json for this project
   trust                   review and approve this project's (changed) config
+  secret set|list|rm      this project's keychain secrets for shell/exec pods (macOS)
   ps [--all]              list running pods
   stop [NAME...] [--all]  stop pods
   guide                   briefing for AI agents + status of this project (read-only)
@@ -84,6 +86,7 @@ const COMMANDS = {
   claude: (args) => launch({ mode: 'claude', command: ['claude', ...args], usesClaude: true, publishPorts: true }),
   exec: execCommand,
   run,
+  secret,
   build,
   auth,
   init,

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { CONFIG_FILE, sha256, trustDir } from './paths.js';
 import { parseDotenv } from './dotenv.js';
+import { secretNameError } from './keychain.js';
 import { readOnlyPath } from './protect.js';
 import { ensurePrivateDir, isInside, kind, readRegularFile, writeFileAtomic } from './safefs.js';
 import { CliError } from './ui.js';
@@ -11,6 +12,7 @@ import { CliError } from './ui.js';
 // is only honoured once you have approved its exact bytes (see isTrusted), and even then it is
 // validated to keep the pod's isolation intact: bridge-type networks only, an envFile inside the
 // project, no host environment variables, no reserved env names, readOnly paths inside the project.
+// `secrets` only names keychain entries; which project's entries is never up to the config.
 
 // Walks up from `start` looking for a directory that satisfies `test`. Returns it, or null.
 function findUp(start, test) {
@@ -59,7 +61,7 @@ export function assertSafeRoot(root, { requireProject = true } = {}) {
   }
 }
 
-const KNOWN_KEYS = new Set(['network', 'ports', 'envFile', 'env', 'resources', 'readOnly']);
+const KNOWN_KEYS = new Set(['network', 'ports', 'envFile', 'env', 'resources', 'readOnly', 'secrets']);
 
 // Env names the launcher sets itself, or that would change how Claude authenticates/stores state.
 const RESERVED_ENV = /^(HOME|CLAUDE_POD(_.*)?|CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_.*)$/;
@@ -147,6 +149,15 @@ function validate(raw, file) {
       seen.add(rel);
     }
   }
+  if (raw.secrets !== undefined) {
+    if (!Array.isArray(raw.secrets)) throw bad('"secrets" must be an array of variable names.');
+    for (const name of raw.secrets) {
+      const error = secretNameError(name);
+      if (error) throw bad(`"secrets" entry ${JSON.stringify(name)} ${error}.`);
+      if (Object.hasOwn(raw.env || {}, name)) throw bad(`"${name}" is in both "env" and "secrets".`);
+    }
+    if (new Set(raw.secrets).size !== raw.secrets.length) throw bad('"secrets" has duplicates.');
+  }
   return raw;
 }
 
@@ -177,7 +188,7 @@ function readEnvFile(root, rel) {
 // Loads and resolves the project's config. With no config file, returns the empty defaults.
 // `hash` is the sha256 of the exact bytes, for the trust check.
 export function loadConfig({ root, configPath }) {
-  const empty = { network: null, ports: [], env: {}, resources: {}, readOnly: [], file: null, hash: null, text: null };
+  const empty = { network: null, ports: [], env: {}, resources: {}, readOnly: [], secrets: [], file: null, hash: null, text: null };
   if (!configPath) return empty;
 
   let bytes;
@@ -201,6 +212,7 @@ export function loadConfig({ root, configPath }) {
     env,
     resources: raw.resources || {},
     readOnly: (raw.readOnly || []).map((p) => readOnlyPath(p).rel),
+    secrets: raw.secrets || [],
     file: configPath,
     hash: sha256(bytes),
     text: bytes.toString('utf8'),

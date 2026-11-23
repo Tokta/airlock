@@ -406,3 +406,127 @@ test('uninstall removes the login token first, and pod state a pod made read-onl
   assert.equal(kind(path.join(s.home, '.claude-pod')), 'missing');
   assert.equal(kind(s.hostDir), 'missing');
 });
+
+test('secrets: set/list/rm through the keychain, never on a command line', async () => {
+  const s = ready();
+  fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), JSON.stringify({ secrets: ['RESEND_API_KEY', 'ANTHROPIC_API_KEY'] }));
+  const set = await cli(['secret', 'set', 'RESEND_API_KEY'], { cwd: s.project, env: s.env, input: 're_s3cret value\n' });
+  assert.equal(set.code, 0, set.stderr);
+  assert.match(set.stderr, /Stored RESEND_API_KEY/);
+  assert.match((await cli(['secret', 'set', 'RESEND_API_KEY'], { cwd: s.project, env: s.env, input: 're_s3cret value' })).stderr, /Replaced/);
+  const other = await cli(['secret', 'set', 'EXTRA'], { cwd: s.project, env: s.env, input: 'x' });
+  assert.match(other.stderr, /EXTRA is not under "secrets"/);
+
+  const db = JSON.parse(fs.readFileSync(s.env.FAKE_KEYCHAIN, 'utf8'));
+  const acct = Object.keys(db).find((k) => k.endsWith('/RESEND_API_KEY'));
+  assert.match(acct, /^claude-pod\/app-[0-9a-f]{12}\/RESEND_API_KEY$/, 'service claude-pod, account <project key>/<NAME>');
+  assert.equal(db[acct], 're_s3cret value', 'trailing newline from a pipe dropped, spaces kept');
+  assert.ok(!fs.readFileSync(s.env.FAKE_SECURITY_LOG, 'utf8').includes('s3cret'), 'value never in argv');
+
+  const list = await cli(['secret', 'list'], { cwd: s.project, env: s.env });
+  assert.equal(list.stdout, 'EXTRA  (not in the config)\nRESEND_API_KEY\nANTHROPIC_API_KEY  (in the config, not stored)\n');
+
+  assert.equal((await cli(['secret', 'rm', 'EXTRA'], { cwd: s.project, env: s.env })).code, 0);
+  assert.match((await cli(['secret', 'rm', 'EXTRA'], { cwd: s.project, env: s.env })).stderr, /No secret EXTRA stored/);
+  const bad = async (args, input, re, env = s.env) => {
+    const r = await cli(args, { cwd: s.project, env, input });
+    assert.equal(r.code, 1, args.join(' '));
+    assert.match(r.stderr, re);
+  };
+  await bad(['secret', 'set', 'HOME'], 'x', /set by claude-pod itself/);
+  await bad(['secret', 'set', 'pnpm_config_store_dir'], 'x', /set by claude-pod itself/);
+  await bad(['secret', 'set', 'A'], 'a\nb', /printable ASCII/);
+  await bad(['secret', 'set', 'A'], 'päss', /printable ASCII/);
+  await bad(['secret', 'set', 'A'], 'a\tb', /printable ASCII/);
+  await bad(['secret', 'set', 'A'], '', /is empty/);
+  await bad(['secret', 'set', 'A'], 'x'.repeat(1025), /longer than 1024/);
+  await bad(['secret', 'bogus'], undefined, /Unknown secret command/);
+  await bad(['secret', 'rm', 'A', '--all'], undefined, /--all only goes with list/);
+  // A keychain that can't be used is an error, never "not stored".
+  const failing = { ...s.env, FAKE_SECURITY_FAIL: '1' };
+  await bad(['secret', 'set', 'A'], 'v', /User interaction is not allowed/, failing);
+  await bad(['secret', 'rm', 'RESEND_API_KEY'], undefined, /User interaction is not allowed/, failing);
+  await bad(['secret', 'list'], undefined, /macOS-only for now/, { ...s.env, FAKE_PLATFORM: 'linux' });
+});
+
+test('secret list: only claude-pod items of this project; --all shows every project', async () => {
+  const s = ready();
+  fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), '{}');
+  assert.equal((await cli(['secret', 'set', 'MINE'], { cwd: s.project, env: s.env, input: 'v' })).code, 0);
+  const key = Object.keys(JSON.parse(fs.readFileSync(s.env.FAKE_KEYCHAIN, 'utf8')))[0].split('/')[1];
+  // Real dump items: other services, a lookalike service, hex and NULL attributes.
+  const extra = path.join(s.dir, 'dump.txt');
+  fs.writeFileSync(extra, [
+    'keychain: "/x/login.keychain-db"', 'class: "genp"', 'attributes:', `    "acct"<blob>="${key}/OTHER_SVC"`, '    "svce"<blob>="claude-pod-x"',
+    'keychain: "/x/login.keychain-db"', 'class: "genp"', 'attributes:', '    "acct"<blob>=0x6162 "ab"', '    "svce"<blob>="claude-pod"',
+    'keychain: "/x/login.keychain-db"', 'class: "genp"', 'attributes:', '    "acct"<blob>=<NULL>', '    "svce"<blob>="claude-pod"',
+    'keychain: "/x/login.keychain-db"', 'class: "inet"', 'attributes:', `    "acct"<blob>="${key}/NO_SVCE"`,
+    'keychain: "/x/login.keychain-db"', 'class: "genp"', 'attributes:', '    "acct"<blob>="other-123456789abc/THEIRS"', '    "svce"<blob>="claude-pod"',
+    '',
+  ].join('\n'));
+  const env = { ...s.env, FAKE_DUMP_EXTRA: extra };
+  assert.equal((await cli(['secret', 'list'], { cwd: s.project, env })).stdout, 'MINE  (not in the config)\n');
+  assert.equal((await cli(['secret', 'list', '--all'], { cwd: s.project, env })).stdout, `${key}/MINE\nother-123456789abc/THEIRS\n`);
+});
+
+test('secrets reach shell and exec pods only, via the env-file; a missing one is skipped', async () => {
+  const s = ready();
+  fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), JSON.stringify({ secrets: ['ANTHROPIC_API_KEY', 'MISSING_KEY'] }));
+  await trustConfig(s);
+  assert.equal((await cli(['secret', 'set', 'ANTHROPIC_API_KEY'], { cwd: s.project, env: s.env, input: 'sk-ant-api-XYZ' })).code, 0);
+
+  const exec = await cli(['exec', 'true'], { cwd: s.project, env: s.env });
+  assert.equal(exec.code, 0, exec.stderr);
+  assert.match(exec.stderr, /secret MISSING_KEY is not stored; starting without it/);
+  assert.match(exec.stderr, /secrets from the keychain: ANTHROPIC_API_KEY/);
+  assert.doesNotMatch(exec.stderr, /runs claude/);
+  const shell = await cli(['shell'], { cwd: s.project, env: s.env });
+  assert.equal(shell.code, 0, shell.stderr);
+  assert.match(shell.stderr, /`claude` here would run on ANTHROPIC_API_KEY \(API billing\)/);
+  const claude = await cli(['claude', '--version'], { cwd: s.project, env: s.env });
+  assert.equal(claude.code, 0, claude.stderr);
+  const run = await cli(['run', '--prompt', 'hi'], { cwd: s.project, env: s.env });
+  assert.equal(run.code, 0, run.stderr);
+  assert.doesNotMatch(claude.stderr + run.stderr, /MISSING_KEY/, 'agent pods never ask for secrets');
+  // exec claude does get them, and says so.
+  const execClaude = await cli(['exec', 'claude', '-p', 'x'], { cwd: s.project, env: s.env });
+  assert.match(execClaude.stderr, /this pod runs claude with the project's secrets \(ANTHROPIC_API_KEY\); ANTHROPIC_API_KEY bills it to the API/);
+
+  const [execRun, shellRun, claudeRun, runRun] = s.runs();
+  for (const { envFile, args } of [execRun, shellRun]) {
+    assert.match(envFile, /^ANTHROPIC_API_KEY=sk-ant-api-XYZ$/m);
+    assert.doesNotMatch(envFile, /MISSING_KEY/);
+    assert.ok(!args.join(' ').includes('sk-ant-api-XYZ'));
+  }
+  for (const { envFile } of [claudeRun, runRun]) assert.doesNotMatch(envFile, /ANTHROPIC_API_KEY|sk-ant-api/);
+
+  const doctor = await cli(['doctor'], { cwd: s.project, env: s.env });
+  assert.match(doctor.stderr, /secret ANTHROPIC_API_KEY: stored/);
+  assert.match(doctor.stderr, /secret MISSING_KEY: missing/);
+  assert.ok(!fs.readFileSync(s.env.FAKE_SECURITY_LOG, 'utf8').split('\n').filter(Boolean).slice(-2).some((l) => l.includes('-w')), 'doctor never reads values');
+
+  // A keychain that can't be read: skipped, with the reason, not "not stored".
+  const locked = await cli(['exec', 'true'], { cwd: s.project, env: { ...s.env, FAKE_SECURITY_FAIL: '1' } });
+  assert.equal(locked.code, 0, locked.stderr);
+  assert.match(locked.stderr, /secret ANTHROPIC_API_KEY can't be read \(.*User interaction is not allowed/);
+  // Elsewhere than macOS: a warning, and the pod starts without them.
+  const linux = await cli(['exec', 'true'], { cwd: s.project, env: { ...s.env, FAKE_PLATFORM: 'linux' } });
+  assert.equal(linux.code, 0, linux.stderr);
+  assert.match(linux.stderr, /macOS-only for now; not passing ANTHROPIC_API_KEY, MISSING_KEY/);
+});
+
+test('one project never sees another project\'s secrets, even with the same names', async () => {
+  const s = ready();
+  const second = path.join(s.dir, 'work', 'other');
+  fs.mkdirSync(path.join(second, '.git'), { recursive: true });
+  for (const dir of [s.project, second]) fs.writeFileSync(path.join(dir, 'claude-pod.config.json'), JSON.stringify({ secrets: ['API_KEY'] }));
+  await trustConfig(s);
+  await trustConfig({ ...s, project: second });
+  assert.equal((await cli(['secret', 'set', 'API_KEY'], { cwd: s.project, env: s.env, input: 'first-project-key' })).code, 0);
+
+  assert.equal((await cli(['secret', 'list'], { cwd: second, env: s.env })).stdout, 'API_KEY  (in the config, not stored)\n');
+  assert.match((await cli(['doctor'], { cwd: second, env: s.env })).stderr, /secret API_KEY: missing/);
+  const exec = await cli(['exec', 'true'], { cwd: second, env: s.env });
+  assert.match(exec.stderr, /secret API_KEY is not stored/);
+  assert.doesNotMatch(s.runs()[0].envFile, /first-project-key/);
+});

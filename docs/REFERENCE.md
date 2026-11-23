@@ -9,6 +9,7 @@ Full reference for claude-pod. For the short version, see the [README](../README
 - [Project root and config](#project-root-and-config)
 - [Ports](#ports)
 - [Login](#login)
+- [Secrets](#secrets)
 - [Running several pods](#running-several-pods)
 - [Updating or pinning Claude Code](#updating-or-pinning-claude-code)
 - [Security model](#security-model)
@@ -38,6 +39,7 @@ claude-pod doctor                     # checks everything
 | `claude-pod build [--claude-version V]` | build or rebuild the image |
 | `claude-pod auth [--from-env] [--remove]` | store the login token from `claude setup-token` |
 | `claude-pod init` | create (and trust) `claude-pod.config.json` for the current project |
+| `claude-pod secret set NAME` / `list` / `rm NAME` | this project's API keys in the macOS keychain, for `shell` and `exec` pods (see [Secrets](#secrets)) |
 | `claude-pod trust` | review and approve a new or changed `claude-pod.config.json` |
 | `claude-pod ps [--all]` / `claude-pod stop [NAME…] [--all]` | list / stop running pods |
 | `claude-pod guide` | briefing for AI agents (how to delegate, read results, handle errors) + status of this project; read-only |
@@ -96,6 +98,7 @@ It must be a project: claude-pod refuses `/`, your home directory, anything cont
 | `env` | Extra environment for the pod. `${VAR}` comes from `envFile` only — never from your host environment. Unset variables are an error; `$$` is a literal `$`. |
 | `resources` | `pids` (default 4096), `memory`, `cpus`. |
 | `readOnly` | Project files and folders your host runs, which pods must not change (see [Project files that would run on your host](#project-files-that-would-run-on-your-host)). Paths relative to the project; no `..`, nothing under `node_modules` or `.git`. |
+| `secrets` | Names of keychain secrets to hand to `shell` and `exec` pods, e.g. `["RESEND_API_KEY"]` (see [Secrets](#secrets)). Never `claude` or `run` pods. |
 
 **The config must be approved.** The file lives in the project, which pods can write — so claude-pod only uses a config whose exact content you've approved. `init` approves what it creates; after any edit (yours or a pod's), run `claude-pod trust` to review and approve it. Interactive launches ask; unattended ones (`run` from an agent, no terminal) refuse to start. Approvals live in `~/.config/claude-pod/trust/`, which no pod can reach.
 
@@ -143,6 +146,31 @@ Where it lives and who can see it:
 
 It doesn't refresh or rotate, so parallel pods can't log each other out — no shared credentials file, no refresh races.
 
+## Secrets
+
+A dev server needs API keys. Rather than a plaintext `.env` in the project, which every pod of the project can read, keep them in the macOS login keychain and name them in the config:
+
+```sh
+claude-pod secret set RESEND_API_KEY     # hidden input, or: claude-pod secret set X < file
+claude-pod secret list                   # names only, never values (--all: every project's)
+claude-pod secret rm RESEND_API_KEY
+```
+
+```json
+{ "secrets": ["ANTHROPIC_API_KEY", "RESEND_API_KEY"] }
+```
+
+- Each is a generic password with service `claude-pod` and account `<project key>/<NAME>`. The project key is the name of the project's state dir, which comes from its path: a project can only fetch its own secrets, whatever its config says. Move or rename the project and you set them again (`secret list --all` shows the old ones). Values are printable ASCII, and go to `/usr/bin/security` on stdin, never on a command line.
+- At launch, each listed name is read from the keychain and passed through the private env-file, like the login token. One that isn't stored, or can't be read (a locked keychain over SSH), is skipped with a warning, so the app runs as it would without the key.
+- **Only `shell` and `exec` pods get them, never `claude` or `run`.** It keeps `ANTHROPIC_API_KEY` away from Claude's pods, where it would switch Claude from your subscription to API billing; so a secret may use that name, while `env` may not. `claude` started by hand inside such a pod (`exec claude`, or in a `shell`) does see them, and `exec claude` warns about it.
+
+What this does **not** do:
+
+- **It is not a wall between the agent and the keys.** An agent pod can change what an `exec` pod later runs: `package.json` scripts, source, `node_modules`, the project's package caches. Your next `claude-pod exec pnpm dev` then runs that code with the secrets loaded and the network open. List `package.json` and the lockfile under `readOnly`, and review the diff before an `exec` after an agent run. A diff doesn't show `node_modules` or the package caches: after an agent run you don't trust, delete `node_modules` and `~/.claude-pod/pods/<project>/pkg-cache/`, then reinstall from the lockfile.
+- **It doesn't hide them from your host.** `security` itself created the items, so any process running as you can read one without a prompt (`security find-generic-password -s claude-pod -a … -w`), the host Claude session included. What it removes is the plaintext file inside the project, which every pod could read.
+- A value changed to non-ASCII in Keychain Access comes back from `security` as hex and reaches the pod that way. Set values with `claude-pod secret set`.
+- macOS only for now; elsewhere `secret` says so and pods start without them. `claude-pod doctor` shows each listed secret as stored or missing, once the config is trusted.
+
 ## Running several pods
 
 Pods are independent: unique names (`claude-pod-<project>-<id>`), free ports, per-project state, and a token that doesn't rotate. `claude-pod ps` lists them; `claude-pod stop` stops the current project's pods (or `--all`, or by name). If a launcher is killed (even with `kill -9`), a small watchdog stops its pod within seconds and quarantines anything it planted. If the watchdog is killed too (e.g. a harness that kills the whole session), the pod keeps running until you `claude-pod stop` it.
@@ -168,7 +196,7 @@ One `docker run` (see `buildRunArgs` in [`src/docker.js`](../src/docker.js)):
 
 - the project folder, read-write, at its real path — **except** the files below, which are read-only;
 - its own project's state dir `~/.claude-pod/pods/<project>/` (sessions, Claude settings, package caches) — never another project's;
-- the login token (`claude` and `run` only) and config env through a private env-file (not on the command line, not in the docker client's environment);
+- the login token (`claude` and `run` only), keychain `secrets` (`shell` and `exec` only) and config env through a private env-file (not on the command line, not in the docker client's environment);
 - your user's uid (`--user`), `--cap-drop=ALL`, `no-new-privileges`, `--pids-limit`, `--init`, optional memory/CPU caps;
 - outbound network (or none), and only the ports you configured, on `127.0.0.1`.
 
@@ -211,12 +239,13 @@ Git inside the pod still works for commits (identity comes from your global `use
 - **Git beyond the top-level hooks and config.** The pod can write the git index and create nested repositories in subfolders (which the index can register as submodules), and host git reads their settings too. The same goes for existing submodules and linked worktrees: their config and hooks under `.git/modules/` and `.git/worktrees/`, and each submodule's `.git` file, are pod-writable, and a host `git status` runs a submodule's `core.fsmonitor`. After an unattended run, inspect with hooks and fsmonitor off until you've reviewed the changes — see [After an unattended run](../INTEGRATION.md#after-an-unattended-run).
 - **The network.** Outbound is open by default, so a pod can send the project (and the login token) anywhere. `"network": "none"` or `NET=none` cuts it, but also takes Claude offline.
 - **The login token** — see [Login](#login).
+- **Keychain secrets** in `shell` and `exec` pods — see [Secrets](#secrets) for what they do and don't protect.
 - **This project's pod history and caches** in `~/.claude-pod/pods/<project>/`: a pod can read and alter its own project's past sessions, Claude settings and package caches, so it can poison a package that the next pod of the project installs. The host never reads the caches, but it does run what lands in `node_modules` (`pnpm dev` on the host): the same trust as the rest of the working tree.
 - **Hardlinks.** A hardlink inside the project to a file elsewhere on the same filesystem is reachable through the mount. It only matters for projects from untrusted sources.
 
 ### What you shouldn't allow an orchestrator
 
-Auto-approve only `Bash(claude-pod run:*)` and the read-only `Bash(claude-pod guide:*)`. `claude-pod trust`, `auth`, `uninstall`, `stop` and plain `claude-pod` should stay behind a prompt: `trust` deliberately needs a terminal, and there's no `--yes`.
+Auto-approve only `Bash(claude-pod run:*)` and the read-only `Bash(claude-pod guide:*)`. `claude-pod trust`, `auth`, `secret`, `exec`, `uninstall`, `stop` and plain `claude-pod` should stay behind a prompt (an `exec` pod gets the project's secrets): `trust` deliberately needs a terminal, and there's no `--yes`.
 
 ### Environment overrides
 
@@ -229,6 +258,7 @@ PIDS=512 claude-pod            # lower the process cap
 ### Side effects outside the project folder
 
 - `~/.config/claude-pod/` — host-only: login token, config approvals, built image ID, settings, and short-lived private run files.
+- On macOS, the keychain items you store with `claude-pod secret set` (service `claude-pod`). `uninstall` leaves them; remove them with `claude-pod secret rm`, or in Keychain Access for a project that moved (`secret list --all` shows them).
 - `~/.claude-pod/pods/` — one Claude state dir per project (sessions, settings). Its `pkg-cache/` folder holds the project's package-manager caches (corepack's pnpm downloads, the pnpm store and metadata cache, the npm cache), so pods don't download everything again on every launch. Each project keeps its own copy, typically tens of MB. `claude-pod uninstall` removes them, and deleting a project's `pkg-cache/` is always safe. A project's `env` can point any of `COREPACK_HOME`, `pnpm_config_store_dir`, `pnpm_config_cache_dir` and `npm_config_cache` elsewhere.
 - The `claude-pod` Docker image (~700 MB), the `node:24-slim` base, and build cache.
 - The global `claude-pod` command (a symlink created by `npm install -g`).

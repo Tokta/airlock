@@ -135,7 +135,7 @@ downloads it on every launch, and every `pnpm install` downloads everything agai
   the pod user can't read, so pods without a pin fetch the latest pnpm on first launch. Fix in the
   Dockerfile (a world-readable prepared copy, or `npm i -g pnpm@…`).
 
-## Batch 5 — secrets from the host keychain
+## [DONE] Batch 5 — secrets from the host keychain
 
 A dev server needs API keys. Today they sit in a plaintext `.env` in the project, which every pod
 and every host process can read. Let the launcher fetch them at start-up instead:
@@ -165,6 +165,12 @@ and every host process can read. Let the launcher fetch them at start-up instead
 - `doctor`: list each configured secret as stored or missing.
 - Tests: the keychain calls go through one function, so tests swap in a fake, the same way the
   fake docker works.
+- **As built (after review, with the user):** `security -i` reads `add-generic-password … -X <hex>`
+  on stdin (checked once against the real keychain with a throwaway entry). `/usr/bin/security` by
+  absolute path; tests preload `test/fixtures/fake-keychain.js`. Values are printable ASCII; only
+  exit 44 means "not stored". `secret list --all` finds a moved project's entries. The docs say
+  plainly what this doesn't do: an agent pod can change what a later `exec` runs with the keys,
+  and any host process running as you can read them.
 
 ## Batch 6 — host shims: package commands go to the pod
 

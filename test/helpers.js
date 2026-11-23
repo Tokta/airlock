@@ -1,5 +1,5 @@
 // Shared test setup: a throwaway HOME (all claude-pod state derives from it), a git project inside
-// it, and a fake `docker` first on PATH.
+// it, and a fake `docker` first on PATH. cli() also preloads a fake keychain.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const BIN = path.join(here, '..', 'bin', 'claude-pod.js');
 const FAKE = path.join(here, 'fixtures', 'fake-docker.js');
+const FAKE_KEYCHAIN = path.join(here, 'fixtures', 'fake-keychain.js');
 
 export const tmp = (prefix = 'claude-pod-test-') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
@@ -30,6 +31,8 @@ export function sandbox() {
     HOME: home,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     FAKE_LOG: path.join(dir, 'docker.log'),
+    FAKE_KEYCHAIN: path.join(dir, 'keychain.json'),
+    FAKE_SECURITY_LOG: path.join(dir, 'security.log'),
     NO_COLOR: '1',
   };
   const runs = () => (fs.existsSync(env.FAKE_LOG) ? fs.readFileSync(env.FAKE_LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : []);
@@ -38,7 +41,7 @@ export function sandbox() {
 
 export function cli(args, { cwd, env, input }) {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [BIN, ...args], { cwd, env, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['--import', FAKE_KEYCHAIN, BIN, ...args], { cwd, env, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });

@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { assertSafeRoot, findProjectRoot, isTrusted, loadConfig, trust, validateResources } from './config.js';
 import { assertNetwork, buildRunArgs, docker, preflight } from './docker.js';
 import { readToken } from './host.js';
+import { getSecret, secretValueError, supported } from './keychain.js';
 import { POD_CACHE_DIR, podsDir, projectStateDir, runDir, stateRoot } from './paths.js';
 import { allocatePorts } from './ports.js';
 import { canPrompt, confirm } from './prompt.js';
@@ -99,7 +100,8 @@ function writeGitIdentity(stateDir) {
 // Package-manager caches that outlive a pod (HOME in the pod is ephemeral): corepack's downloads,
 // the pnpm store and metadata cache, and the npm cache, under the project's state dir. They are
 // pod-writable, so a pod can poison them, but only for later pods of the same project, which
-// already share its working tree and node_modules. The host never reads them.
+// already share its working tree and node_modules (an `exec` pod with the project's secrets
+// among them, see readSecrets). The host never reads them.
 // pnpm 11+ reads pnpm_config_*. pnpm 10 and older read the store from npm_config_store_dir,
 // which makes npm warn about an unknown setting on every run, so it is only set when the
 // project's package.json pins such a pnpm. That file is pod-writable, but it only picks which of
@@ -129,6 +131,38 @@ function podEnvFor(root, configEnv) {
   const merged = { ...env, ...configEnv, GIT_CONFIG_GLOBAL: '/home/claude-pod/.claude/gitconfig' };
   if (oldPnpm && !Object.hasOwn(configEnv, 'npm_config_store_dir')) merged.npm_config_store_dir = merged.pnpm_config_store_dir;
   return merged;
+}
+
+// The config's secrets from the keychain, for shell and exec pods only: a prompt-injected agent
+// with an open network is exactly what should not hold the app's keys (and ANTHROPIC_API_KEY in
+// Claude's env would switch it to API billing). One that is missing or can't be read is skipped
+// with a warning, so the app runs as it does without the key.
+function readSecrets(root, names, usesClaude, command) {
+  if (!names.length || usesClaude) return {};
+  if (!supported()) {
+    warn(`keychain secrets are macOS-only for now; not passing ${names.join(', ')}.`);
+    return {};
+  }
+  const out = {};
+  for (const name of names) {
+    let error;
+    try {
+      const value = getSecret(root, name);
+      error = value === null ? 'is not stored' : secretValueError(value);
+      if (!error) out[name] = value;
+    } catch (e) {
+      if (!(e instanceof CliError)) throw e;
+      error = `can't be read (${e.message})`;
+    }
+    if (error) warn(`secret ${name} ${error}; starting without it (${bold(`claude-pod secret set ${name}`)}).`);
+  }
+  // `exec claude` is not a Claude pod as far as the launcher knows: say where the keys are going.
+  // Only a direct `claude` is caught (not `npx claude` or `bash -c claude`); the docs and guide
+  // tell agents to use `claude-pod run` instead.
+  if (Object.keys(out).length && path.basename(command[0] || '') === 'claude') {
+    warn(`this pod runs claude with the project's secrets (${Object.keys(out).join(', ')})${out.ANTHROPIC_API_KEY ? '; ANTHROPIC_API_KEY bills it to the API' : ''}. Use ${bold('claude-pod claude')} for an agent.`);
+  }
+  return out;
 }
 
 // Docker --env-file content. Values can't contain newlines (config.js and host.js reject them).
@@ -175,7 +209,8 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   const priv = path.join(runDir(), name);
   ensurePrivateDir(priv);
 
-  const podEnv = podEnvFor(root, config.env);
+  const secrets = readSecrets(root, config.secrets, usesClaude, command);
+  const podEnv = { ...podEnvFor(root, config.env), ...secrets };
   if (token) podEnv.CLAUDE_CODE_OAUTH_TOKEN = token;
   const envFile = path.join(priv, 'env');
   writeFileAtomic(envFile, envFileContent(podEnv));
@@ -209,8 +244,12 @@ export async function launch({ mode, command, cwd = process.cwd(), usesClaude, p
   info(`claude-pod ${name}`);
   detail(`project: ${clean(root)}${configPath ? '' : ' (no claude-pod.config.json)'}`);
   if (config.network) detail(`network: ${config.network}`);
+  if (Object.keys(secrets).length) detail(`secrets from the keychain: ${Object.keys(secrets).join(', ')}`);
   for (const { container, host } of ports) detail(`port ${container} → http://127.0.0.1:${host}`);
-  if (mode === 'shell') detail(`login: none in this pod, so \`claude\` here is not logged in; use ${bold('claude-pod claude')}`);
+  if (mode === 'shell') {
+    const how = secrets.ANTHROPIC_API_KEY ? 'would run on ANTHROPIC_API_KEY (API billing) with the project\'s secrets' : 'is not logged in';
+    detail(`login: none in this pod, so \`claude\` here ${how}; use ${bold('claude-pod claude')}`);
+  }
 
   // The watchdog first: from the moment files are locked, something must be there to unlock them
   // if this launcher dies (Ctrl-C now, a crash). With no record yet it has nothing to sweep.

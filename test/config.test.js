@@ -61,6 +61,9 @@ test('loadConfig resolves env from envFile and validates', () => {
   assert.deepEqual(config.env, { DATABASE_URL: 'postgresql://u:secret@postgres/db' });
   assert.match(config.hash, /^[0-9a-f]{64}$/);
   assert.deepEqual(config.readOnly, []);
+  assert.deepEqual(config.secrets, []);
+  fs.writeFileSync(configPath, JSON.stringify({ secrets: ['ANTHROPIC_API_KEY', 'RESEND_API_KEY'] }));
+  assert.deepEqual(loadConfig({ root: dir, configPath }).secrets, ['ANTHROPIC_API_KEY', 'RESEND_API_KEY'], 'ANTHROPIC_* allowed: secrets never reach Claude');
   assert.deepEqual(config.ports, [{ port: 3000, fixed: false }, { port: 3131, fixed: false }]);
   fs.writeFileSync(configPath, JSON.stringify({ ports: [{ port: 3000, fixed: true }, 3131, { port: 8080 }, { port: 9000, fixed: false }] }));
   assert.deepEqual(loadConfig({ root: dir, configPath }).ports, [
@@ -94,6 +97,12 @@ test('loadConfig resolves env from envFile and validates', () => {
   bad({ resources: { memory: '0' } }, /memory/);
   bad({ resources: { cpus: '-1' } }, /cpus/);
   bad({ resources: { pids: 1 } }, /pids/);
+  bad({ secrets: 'A' }, /"secrets" must be an array/);
+  bad({ secrets: ['A-B'] }, /not a valid variable name/);
+  bad({ secrets: ['CLAUDE_CODE_OAUTH_TOKEN'] }, /set by claude-pod itself/);
+  bad({ secrets: ['GIT_CONFIG_GLOBAL'] }, /set by claude-pod itself/);
+  bad({ secrets: ['A', 'A'] }, /duplicates/);
+  bad({ secrets: ['A'], env: { A: 'x' } }, /both "env" and "secrets"/);
   bad({ readOnly: 'scripts' }, /"readOnly" must be an array/);
   bad({ readOnly: [3] }, /non-empty string/);
   bad({ readOnly: ['/etc'] }, /relative to the project/);

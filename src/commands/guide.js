@@ -54,7 +54,7 @@ the sub-agent's own errors (e.g. "Not logged in", 401) are in .err.
 | You see (in .err or on stderr) | Meaning | Do this |
 |---|---|---|
 | "…config.json is new or has changed since you approved it" | the project config needs human approval | STOP. Tell the user to review it and run \`claude-pod trust\`. Never approve it yourself. |
-| "No login token" / "Not logged in" / 401 | no or invalid login, or \`claude\` was started inside an \`exec\`/\`shell\` pod (they get no token) | Use \`claude-pod run\` for sub-agents. Otherwise tell the user to run \`claude setup-token\` then \`claude-pod auth\`. |
+| "No login token" / "Not logged in" / 401 | no or invalid login, or \`claude\` was started inside an \`exec\`/\`shell\` pod (they get no token, only the project's secrets, which may include an API key) | Use \`claude-pod run\` for sub-agents. Otherwise tell the user to run \`claude setup-token\` then \`claude-pod auth\`. |
 | "Image 'claude-pod' not found" / "not the one claude-pod built" | image missing or replaced | Tell the user to run \`claude-pod build\`. |
 | "Docker daemon is not running" / "network … not found" | Docker or the app stack is down | Tell the user (e.g. start Docker, \`docker compose up -d\`). |
 | "--prompt-file/--out … outside the allowed folders" / "inside the project" | path rule | Move the file to your scratchpad (temp dir). |
@@ -74,14 +74,19 @@ the sub-agent's own errors (e.g. "Not logged in", 401) are in .err.
   (\`--global\` only affects the pod); \`git commit\` works with the user's global identity;
   use \`git -c key=value …\`.
 - The login token is in \`run\` and \`claude\` pods only (code there can read it);
-  \`claude-pod exec\` and \`shell\` pods have none, so \`claude\` inside them is not logged in.
+  \`claude-pod exec\` and \`shell\` pods have none, so \`claude\` inside them is not logged in
+  (unless the project's secrets include ANTHROPIC_API_KEY, which bills the API).
+  The project's keychain secrets (API keys) go to \`exec\` and \`shell\` pods only, never to
+  sub-agents: a missing API key inside a \`run\` pod is by design, not a bug to work around.
 - Detect the pod from inside with \`[ "$CLAUDE_POD" = 1 ]\`.
 
 ## Never
 
-- Never run \`claude-pod trust\`, \`claude-pod auth\`, \`claude-pod uninstall\`, or edit
+- Never run \`claude-pod trust\`, \`claude-pod auth\`, \`claude-pod secret\`, \`claude-pod uninstall\`, or edit
   claude-pod.config.json to get a run working — those are the user's decisions.
 - Never pass secrets in --prompt; the sub-agent sees everything you send it.
+- Never use \`claude-pod exec claude\` (or \`claude\` in a \`shell\` pod) for a sub-agent: those
+  pods hold the project's API keys. Use \`claude-pod run\`.
 - Never push the sub-agent's work without reviewing the diff first.
 
 Other commands (for humans): \`claude-pod doctor\` (full check), \`claude-pod ps\` / \`stop\`,
