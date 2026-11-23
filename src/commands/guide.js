@@ -6,16 +6,16 @@ import { recordedImageId } from '../docker.js';
 import { hostSettingsPath } from '../paths.js';
 import { clean } from '../ui.js';
 
-export const GUIDE_HELP = `Usage: claude-pod guide [--no-status]
+export const GUIDE_HELP = `Usage: airlock guide [--no-status]
 
 Prints a briefing for AI agents: how to delegate a task to a sandboxed Claude with
-\`claude-pod run\`, how to read the results, what each failure means and what to do about it,
+\`airlock run\`, how to read the results, what each failure means and what to do about it,
 and what the pod can and can't do. Ends with a live status of the current project.
 Read-only: it never changes anything, so it is safe to auto-approve.`;
 
-const GUIDE = `# claude-pod — guide for agents
+const GUIDE = `# airlock — guide for agents
 
-claude-pod runs Claude Code inside a Docker container ("pod") that can only see the current
+airlock runs Claude Code inside a Docker container ("pod") that can only see the current
 project. Use it to hand a task to a sub-agent that runs with --dangerously-skip-permissions,
 without giving that sub-agent the rest of this machine.
 
@@ -26,10 +26,10 @@ without giving that sub-agent the rest of this machine.
 2. Run exactly this form — one command, absolute paths, no cd, no variables, no $(…),
    no redirects, no pipes:
 
-       claude-pod run --model opus --prompt-file /abs/scratchpad/step-3.md --out /abs/scratchpad/step-3
+       airlock run --model opus --prompt-file /abs/scratchpad/step-3.md --out /abs/scratchpad/step-3
 
    Run it from inside the project (any subfolder works; the project root is found upwards).
-3. If claude-pod rejects the command itself (bad option, disallowed path, not in a project) it
+3. If airlock rejects the command itself (bad option, disallowed path, not in a project) it
    fails at once with exit 1 or 2, the reason on stderr, and writes NO files — so check the
    command's own exit status first. Otherwise it prints \`exit=<code>\` when done, exits with
    that code, and you read:
@@ -53,14 +53,14 @@ the sub-agent's own errors (e.g. "Not logged in", 401) are in .err.
 
 | You see (in .err or on stderr) | Meaning | Do this |
 |---|---|---|
-| "…config.json is new or has changed since you approved it" | the project config needs human approval | STOP. Tell the user to review it and run \`claude-pod trust\`. Never approve it yourself. |
-| "No login token" / "Not logged in" / 401 | no or invalid login, or \`claude\` was started inside an \`exec\`/\`shell\` pod (they get no token, only the project's secrets, which may include an API key) | Use \`claude-pod run\` for sub-agents. Otherwise tell the user to run \`claude setup-token\` then \`claude-pod auth\`. |
-| "Image 'claude-pod' not found" / "not the one claude-pod built" | image missing or replaced | Tell the user to run \`claude-pod build\`. |
+| "…config.json is new or has changed since you approved it" | the project config needs human approval | STOP. Tell the user to review it and run \`airlock trust\`. Never approve it yourself. |
+| "No login token" / "Not logged in" / 401 | no or invalid login, or \`claude\` was started inside an \`exec\`/\`shell\` pod (they get no token, only the project's secrets, which may include an API key) | Use \`airlock run\` for sub-agents. Otherwise tell the user to run \`claude setup-token\` then \`airlock auth\`. |
+| "Image 'airlock' not found" / "not the one airlock built" | image missing or replaced | Tell the user to run \`airlock build\`. |
 | "Docker daemon is not running" / "network … not found" | Docker or the app stack is down | Tell the user (e.g. start Docker, \`docker compose up -d\`). |
 | "--prompt-file/--out … outside the allowed folders" / "inside the project" | path rule | Move the file to your scratchpad (temp dir). |
 | "Refusing to mount …" | not run from inside a project | Run from the project folder. |
 | "…is a symlink…" / "…commondir exists…" / "quarantined" | a previous pod may have tampered with protected files | STOP and tell the user; don't delete or restore anything yourself. |
-| "Unknown option" / "Unexpected argument" / "Pass exactly one of" | bad claude-pod arguments | Fix the command (see \`claude-pod run --help\`). |
+| "Unknown option" / "Unexpected argument" / "Pass exactly one of" | bad airlock arguments | Fix the command (see \`airlock run --help\`). |
 | any other non-zero exit | the sub-agent itself failed | Read .out and .err; retry once at most with a clearer prompt. |
 
 ## Inside the pod (what the sub-agent can and can't do)
@@ -74,23 +74,23 @@ the sub-agent's own errors (e.g. "Not logged in", 401) are in .err.
   (\`--global\` only affects the pod); \`git commit\` works with the user's global identity;
   use \`git -c key=value …\`.
 - The login token is in \`run\` and \`claude\` pods only (code there can read it);
-  \`claude-pod exec\` and \`shell\` pods have none, so \`claude\` inside them is not logged in
+  \`airlock exec\` and \`shell\` pods have none, so \`claude\` inside them is not logged in
   (unless the project's secrets include ANTHROPIC_API_KEY, which bills the API).
   The project's keychain secrets (API keys) go to \`exec\` and \`shell\` pods only, never to
   sub-agents: a missing API key inside a \`run\` pod is by design, not a bug to work around.
-- Detect the pod from inside with \`[ "$CLAUDE_POD" = 1 ]\`.
+- Detect the pod from inside with \`[ "$AIRLOCK" = 1 ]\`.
 
 ## Never
 
-- Never run \`claude-pod trust\`, \`claude-pod auth\`, \`claude-pod secret\`, \`claude-pod uninstall\`, or edit
-  claude-pod.config.json to get a run working — those are the user's decisions.
+- Never run \`airlock trust\`, \`airlock auth\`, \`airlock secret\`, \`airlock uninstall\`, or edit
+  airlock.config.json to get a run working — those are the user's decisions.
 - Never pass secrets in --prompt; the sub-agent sees everything you send it.
-- Never use \`claude-pod exec claude\` (or \`claude\` in a \`shell\` pod) for a sub-agent: those
-  pods hold the project's API keys. Use \`claude-pod run\`.
+- Never use \`airlock exec claude\` (or \`claude\` in a \`shell\` pod) for a sub-agent: those
+  pods hold the project's API keys. Use \`airlock run\`.
 - Never push the sub-agent's work without reviewing the diff first.
 
-Other commands (for humans): \`claude-pod doctor\` (full check), \`claude-pod ps\` / \`stop\`,
-\`claude-pod --help\`.
+Other commands (for humans): \`airlock doctor\` (full check), \`airlock ps\` / \`stop\`,
+\`airlock --help\`.
 `;
 
 // Live status for the current folder, from host-side state only (no Docker calls, no writes).
@@ -115,16 +115,16 @@ function status() {
         const trusted = isTrusted(found.root, config.hash);
         row(trusted, trusted
           ? `config: ${path.basename(found.configPath)} approved`
-          : 'config: new or changed — runs will refuse until the user runs `claude-pod trust`');
+          : 'config: new or changed — runs will refuse until the user runs `airlock trust`');
       } catch (e) {
         row(false, `config: ${e.message}`);
       }
     }
   }
   const token = !!readToken();
-  row(token, token ? 'login token: stored' : 'login token: missing — user must run `claude setup-token` + `claude-pod auth`');
+  row(token, token ? 'login token: stored' : 'login token: missing — user must run `claude setup-token` + `airlock auth`');
   const image = !!recordedImageId();
-  row(image, image ? 'image: built by claude-pod' : 'image: not built yet — user must run `claude-pod build`');
+  row(image, image ? 'image: built by airlock' : 'image: not built yet — user must run `airlock build`');
   try {
     row(true, `allowed --prompt-file/--out folders: ${allowedRunDirs().join(', ')} (more via "runDirs" in ${hostSettingsPath()})`);
   } catch (e) {

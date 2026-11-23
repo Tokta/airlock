@@ -11,7 +11,7 @@ RUN apt-get update \
 # version. Default "latest" tracks whatever's current on npm.
 ARG CLAUDE_CODE_VERSION=latest
 
-# When CLAUDE_CODE_VERSION=latest, `claude-pod build` passes CACHEBUST=<timestamp> to force a
+# When CLAUDE_CODE_VERSION=latest, `airlock build` passes CACHEBUST=<timestamp> to force a
 # fresh refetch (the literal "latest" alone wouldn't change the layer's cache key). For pinned
 # versions, the version literal itself is the cache key, so the build skips CACHEBUST and this
 # layer caches normally.
@@ -28,9 +28,9 @@ RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 # between the host and the container, especially on Linux environments.
 # Create a dedicated, globally writable home directory for our dynamic runtime user (sticky bit,
 # like /tmp: any uid can create entries, only the owner can remove them).
-RUN mkdir -p /home/claude-pod && chmod 1777 /home/claude-pod
+RUN mkdir -p /home/airlock && chmod 1777 /home/airlock
 
 # Override the default bash prompt to hide the "I have no name!" warning for dynamic users.
-RUN echo 'PS1="claude-pod:\w\$ "' >> /etc/bash.bashrc
+RUN echo 'PS1="airlock:\w\$ "' >> /etc/bash.bashrc
 
 CMD ["bash"]

@@ -45,16 +45,16 @@ export function imageStatus() {
 export function preflight() {
   if (docker(['info'], { stdio: 'ignore' }).status !== 0) throw new CliError('Docker daemon is not running.');
   const img = imageStatus();
-  if (!img.exists) throw new CliError(`Image '${IMAGE}' not found.`, { hint: `Build it once with ${bold('claude-pod build')}.` });
+  if (!img.exists) throw new CliError(`Image '${IMAGE}' not found.`, { hint: `Build it once with ${bold('airlock build')}.` });
   // The image tag is global: anything that can talk to the Docker daemon could retag it. We only
-  // run the exact image `claude-pod build` produced.
+  // run the exact image `airlock build` produced.
   if (img.replaced) {
-    throw new CliError(`Image '${IMAGE}' is not the one claude-pod built (${img.id.slice(7, 19)} ≠ ${img.recorded.slice(7, 19)}).`, {
-      hint: `If you rebuilt it yourself, run ${bold('claude-pod build')} to rebuild and re-record it.`,
+    throw new CliError(`Image '${IMAGE}' is not the one airlock built (${img.id.slice(7, 19)} ≠ ${img.recorded.slice(7, 19)}).`, {
+      hint: `If you rebuilt it yourself, run ${bold('airlock build')} to rebuild and re-record it.`,
     });
   }
-  if (!img.recorded) warn(`Image '${IMAGE}' was not built by this version of claude-pod. Run ${bold('claude-pod build')}.`);
-  else if (img.stale) warn(`Image '${IMAGE}' was built from a different Dockerfile. Rebuild with ${bold('claude-pod build')}.`);
+  if (!img.recorded) warn(`Image '${IMAGE}' was not built by this version of airlock. Run ${bold('airlock build')}.`);
+  else if (img.stale) warn(`Image '${IMAGE}' was built from a different Dockerfile. Rebuild with ${bold('airlock build')}.`);
 }
 
 // Only `none` and bridge-driver networks: `host`, macvlan/ipvlan and the like would put the pod on
@@ -72,7 +72,7 @@ export function assertNetwork(network) {
 // Builds the full `docker run` argument list. Pure, so the security-relevant flags are unit-tested.
 //
 //   --user uid:gid                  run as the host user, so files the pod writes are yours.
-//   HOME=/home/claude-pod           a writable (ephemeral) home for that nameless user.
+//   HOME=/home/airlock           a writable (ephemeral) home for that nameless user.
 //   <root> -> <root>                project at its real path: logs and stack traces read the same.
 //   <pinned…> -> same               .git and the folders above readOnly paths, each its own mount
 //                                   point, so they can't be renamed and swapped out.
@@ -93,7 +93,7 @@ export function buildRunArgs({
   // `-v src:dst[:ro]` splits on colons, so a path containing one (a folder a pod created, say)
   // could change what gets mounted where.
   for (const p of [root, workdir, stateDir, ...pinned, ...readOnly]) {
-    if (/[:\n\r\0]/.test(p)) throw new CliError(`Path ${JSON.stringify(p)} contains a colon or control character; claude-pod can't mount it safely.`);
+    if (/[:\n\r\0]/.test(p)) throw new CliError(`Path ${JSON.stringify(p)} contains a colon or control character; airlock can't mount it safely.`);
   }
   const args = ['run', '--rm', '--init', '--stop-timeout=10', '--name', name];
   if (interactive) args.push('-i');
@@ -111,12 +111,12 @@ export function buildRunArgs({
     '--cap-drop=ALL',
     '--security-opt=no-new-privileges',
     '--user', `${uid}:${gid}`,
-    '-e', 'HOME=/home/claude-pod',
+    '-e', 'HOME=/home/airlock',
     '-e', `CLAUDE_CONFIG_DIR=${POD_CONFIG_DIR}`,
-    '-e', 'CLAUDE_POD=1',
-    '-e', `CLAUDE_POD_NAME=${name}`,
+    '-e', 'AIRLOCK=1',
+    '-e', `AIRLOCK_NAME=${name}`,
   );
-  for (const { host, container } of ports) args.push('-e', `CLAUDE_POD_PORT_${container}=${host}`);
+  for (const { host, container } of ports) args.push('-e', `AIRLOCK_PORT_${container}=${host}`);
   if (envFile) args.push('--env-file', envFile);
 
   args.push('-v', `${root}:${root}`);

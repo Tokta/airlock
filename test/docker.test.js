@@ -5,9 +5,9 @@ import { buildRunArgs } from '../src/docker.js';
 import { allocatePorts, portIsFree } from '../src/ports.js';
 
 const base = {
-  name: 'claude-pod-app-abc123', mode: 'run', root: '/work/app', workdir: '/work/app/sub',
-  stateDir: '/home/me/.claude-pod/pods/app-123', uid: 501, gid: 20, interactive: false, tty: false,
-  envFile: '/home/me/.config/claude-pod/run/x/env',
+  name: 'airlock-app-abc123', mode: 'run', root: '/work/app', workdir: '/work/app/sub',
+  stateDir: '/home/me/.airlock/pods/app-123', uid: 501, gid: 20, interactive: false, tty: false,
+  envFile: '/home/me/.config/airlock/run/x/env',
 };
 
 test('hardening, mounts and identity flags are always present', () => {
@@ -17,14 +17,14 @@ test('hardening, mounts and identity flags are always present', () => {
   }
   const after = (flag) => args[args.indexOf(flag) + 1];
   assert.equal(after('--user'), '501:20');
-  assert.equal(after('--name'), 'claude-pod-app-abc123');
+  assert.equal(after('--name'), 'airlock-app-abc123');
   assert.equal(after('-w'), '/work/app/sub');
   assert.equal(after('--env-file'), base.envFile);
   assert.ok(args.includes('/work/app:/work/app'));
-  assert.ok(args.includes('/home/me/.claude-pod/pods/app-123:/home/claude-pod/.claude'));
-  assert.ok(args.includes('CLAUDE_CONFIG_DIR=/home/claude-pod/.claude'));
+  assert.ok(args.includes('/home/me/.airlock/pods/app-123:/home/airlock/.claude'));
+  assert.ok(args.includes('CLAUDE_CONFIG_DIR=/home/airlock/.claude'));
   assert.ok(!args.some((a) => a.endsWith('.claude.json')), 'no single-file mounts');
-  assert.deepEqual(args.slice(-3), ['claude-pod', 'claude', '--version']);
+  assert.deepEqual(args.slice(-3), ['airlock', 'claude', '--version']);
   assert.ok(!args.includes('-i') && !args.includes('-t'));
 });
 
@@ -45,7 +45,7 @@ test('paths with colons are refused', () => {
 test('ports bind to loopback only and are exposed as env', () => {
   const args = buildRunArgs({ ...base, ports: [{ container: 3000, host: 51234 }] });
   assert.ok(args.includes('127.0.0.1:51234:3000'));
-  assert.ok(args.includes('CLAUDE_POD_PORT_3000=51234'));
+  assert.ok(args.includes('AIRLOCK_PORT_3000=51234'));
 });
 
 test('network, resources and tty flags', () => {
@@ -75,7 +75,7 @@ test('a fixed port keeps its number, in config order, and a random one never tak
   // The fixed port is published on the host as-is and the env var names the same number.
   const args = buildRunArgs({ ...base, ports });
   assert.ok(args.includes('127.0.0.1:3000:3000'));
-  assert.ok(args.includes('CLAUDE_POD_PORT_3000=3000'));
+  assert.ok(args.includes('AIRLOCK_PORT_3000=3000'));
 });
 
 test('a busy fixed port refuses to start, never falls back to a random port', async () => {

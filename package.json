@@ -1,11 +1,11 @@
 {
-  "name": "claude-pod",
+  "name": "airlock",
   "version": "2.0.0",
   "description": "Run Claude Code in a Docker sandbox scoped to one project folder.",
   "private": true,
   "type": "module",
   "bin": {
-    "claude-pod": "bin/claude-pod.js"
+    "airlock": "bin/airlock.js"
   },
   "engines": {
     "node": ">=20"

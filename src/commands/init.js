@@ -6,7 +6,7 @@ import { docker } from '../docker.js';
 import { CONFIG_FILE } from '../paths.js';
 import { CliError, bold, detail, info, ok } from '../ui.js';
 
-export const INIT_HELP = `Usage: claude-pod init
+export const INIT_HELP = `Usage: airlock init
 
 Creates ${CONFIG_FILE} at the project root (the git root, or the current folder) and marks it
 trusted. Keys:
@@ -20,10 +20,10 @@ trusted. Keys:
              (\${VAR} comes from envFile only, never from your host environment)
   resources  {"pids": 4096, "memory": "4g", "cpus": 2}
   readOnly   project files the host runs, which pods can't change, e.g. ["package.json", "scripts"]
-  secrets    keychain secrets for shell and exec pods (claude-pod secret set NAME), e.g. ["API_KEY"]
-  shims      {"host": ["dev"]}: host pnpm/npm/node go to a pod, except these scripts (claude-pod shims)
+  secrets    keychain secrets for shell and exec pods (airlock secret set NAME), e.g. ["API_KEY"]
+  shims      {"host": ["dev"]}: host pnpm/npm/node go to a pod, except these scripts (airlock shims)
 
-After editing the file, approve the new content with \`claude-pod trust\`.`;
+After editing the file, approve the new content with \`airlock trust\`.`;
 
 // Docker Compose names a project's default network "<folder>_default" (lowercased, and stripped
 // of characters it doesn't allow). Suggest it when it exists.
@@ -49,11 +49,11 @@ export async function init(argv) {
   // A fresh config (and its trust record) would quietly end the project's shims opt-in.
   if (optedIntoShims(root)) {
     throw new CliError(`${root} had a ${CONFIG_FILE} with "shims", and it is gone. A pod may have deleted it.`, {
-      hint: 'Restore it (from git, say). If you removed it on purpose, see claude-pod shims --help.',
+      hint: 'Restore it (from git, say). If you removed it on purpose, see airlock shims --help.',
     });
   }
 
-  const config = { $comment: 'claude-pod project config — run `claude-pod init --help` for the keys.' };
+  const config = { $comment: 'airlock project config — run `airlock init --help` for the keys.' };
   const network = detectComposeNetwork(root);
   if (network) config.network = network;
   config.ports = [];
@@ -67,10 +67,10 @@ export async function init(argv) {
   if (network) detail(`detected Docker network: ${network}`);
 
   info('Next steps');
-  process.stderr.write(`  1. Fill in ports/env in ${CONFIG_FILE}, then ${bold('claude-pod trust')} to approve the edit.\n`);
+  process.stderr.write(`  1. Fill in ports/env in ${CONFIG_FILE}, then ${bold('airlock trust')} to approve the edit.\n`);
   process.stderr.write(`  2. Let agents launch pods without prompts — add to .claude/settings.json:\n`);
-  process.stderr.write(`       "permissions": { "allow": ["Bash(claude-pod run:*)", "Bash(claude-pod guide:*)"] }\n`);
-  process.stderr.write(`     and tell agents to start with ${bold('claude-pod guide')}.\n`);
-  process.stderr.write(`  3. Headless runs: ${bold('claude-pod run --prompt-file /tmp/task.md --out /tmp/task')}\n`);
+  process.stderr.write(`       "permissions": { "allow": ["Bash(airlock run:*)", "Bash(airlock guide:*)"] }\n`);
+  process.stderr.write(`     and tell agents to start with ${bold('airlock guide')}.\n`);
+  process.stderr.write(`  3. Headless runs: ${bold('airlock run --prompt-file /tmp/task.md --out /tmp/task')}\n`);
   return 0;
 }

@@ -1,4 +1,4 @@
-// Shared test setup: a throwaway HOME (all claude-pod state derives from it), a git project inside
+// Shared test setup: a throwaway HOME (all airlock state derives from it), a git project inside
 // it, and a fake `docker` first on PATH. cli() also preloads a fake keychain.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -7,11 +7,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const BIN = path.join(here, '..', 'bin', 'claude-pod.js');
+export const BIN = path.join(here, '..', 'bin', 'airlock.js');
 const FAKE = path.join(here, 'fixtures', 'fake-docker.js');
 const FAKE_KEYCHAIN = path.join(here, 'fixtures', 'fake-keychain.js');
 
-export const tmp = (prefix = 'claude-pod-test-') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+export const tmp = (prefix = 'airlock-test-') => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
 export function sandbox() {
   const dir = tmp();
@@ -23,7 +23,7 @@ export function sandbox() {
   fs.writeFileSync(path.join(project, '.git', 'config'), '[core]\n');
   fs.mkdirSync(bin);
   fs.symlinkSync(FAKE, path.join(bin, 'docker'));
-  const hostDir = path.join(home, '.config', 'claude-pod');
+  const hostDir = path.join(home, '.config', 'airlock');
   fs.mkdirSync(hostDir, { recursive: true });
   fs.writeFileSync(path.join(hostDir, 'image-id'), 'sha256:fake\n');
   const env = {
@@ -51,7 +51,7 @@ export function cli(args, { cwd, env, input }) {
   });
 }
 
-// Trust the project's current config the way `claude-pod trust` would, under the sandbox HOME.
+// Trust the project's current config the way `airlock trust` would, under the sandbox HOME.
 export async function trustConfig(s) {
   const prev = process.env.HOME;
   process.env.HOME = s.home;

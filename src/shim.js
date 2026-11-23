@@ -1,5 +1,5 @@
 // Host shims: `pnpm`, `node` & co. typed on the host (by a person or the host Claude session) run in
-// a pod when the project opted in. The shell launchers `claude-pod shims` writes call shimMain
+// a pod when the project opted in. The shell launchers `airlock shims` writes call shimMain
 // after taking the shims folder (and relative entries) off PATH, so everything here sees the real
 // binaries.
 import fs from 'node:fs';
@@ -60,7 +60,7 @@ export function hostScript(tool, args, host) {
 
 // The project that decides for a command started in `start` (a real folder): { root, config } when
 // it opted in, null when the command runs on the host as usual, or a CliError when it must not run
-// at all. Only projects that opted in are affected: the nearest claude-pod.config.json with "shims"
+// at all. Only projects that opted in are affected: the nearest airlock.config.json with "shims"
 // (config only, not the git root). A project whose approved config had "shims" stays opted in even
 // if a pod deletes the key or the whole config.
 function shimProject(tool, start) {
@@ -69,7 +69,7 @@ function shimProject(tool, start) {
   // The opted-in project's own config is gone (a nearer or farther one doesn't count).
   if (opted && root !== opted && (!root || isInside(opted, root))) {
     throw new CliError(`${CONFIG_FILE} in ${opted} is gone, and it had "shims", so ${tool} doesn't run.`, {
-      hint: 'Restore it (a pod may have deleted it). If you removed it on purpose, see claude-pod shims --help.',
+      hint: 'Restore it (a pod may have deleted it). If you removed it on purpose, see airlock shims --help.',
     });
   }
   if (!root) return null;
@@ -89,7 +89,7 @@ function shimProject(tool, start) {
   }
   if (!isTrusted(root, config.hash)) {
     throw new CliError(`${config.file} is new or has changed since you approved it, so ${tool} doesn't run.`, {
-      hint: `Review it (a pod can edit it), then run ${bold('claude-pod trust')}. Shimmed commands never run on the host instead.`,
+      hint: `Review it (a pod can edit it), then run ${bold('airlock trust')}. Shimmed commands never run on the host instead.`,
     });
   }
   // Trusted without "shims": you approved turning them off.
@@ -114,7 +114,7 @@ function lockedForAllRuns(root, rel) {
 }
 
 // Whether a real path inside the project is one no pod can write: under a "readOnly" entry (locked
-// for every running pod too) or a path claude-pod always locks (.claude/, .git/hooks, …), and not
+// for every running pod too) or a path airlock always locks (.claude/, .git/hooks, …), and not
 // created by a pod that is running.
 export function podProof(root, config, real) {
   if (maybePlanted(root, real)) return false;
@@ -130,7 +130,7 @@ export function podProof(root, config, real) {
 function changedSinceTrust(root, rel) {
   if (!readOnlyChanged(root, rel)) return false;
   throw new CliError(`${path.join(root, rel)} changed after you approved ${CONFIG_FILE}, while a pod that could still write it was running.`, {
-    hint: `Review it (git diff), then run ${bold('claude-pod trust')} to approve its content.`,
+    hint: `Review it (git diff), then run ${bold('airlock trust')} to approve its content.`,
   });
 }
 
@@ -214,7 +214,7 @@ function readHostScript(root, config, hs, cwd) {
   const listed = config.readOnly.some((rel) => fold(rel) === 'package.json');
   if (!listed || kind(file) !== 'file' || !podProof(root, config, realEntry(root, 'package.json') ?? file)) {
     throw new CliError(`"${hs.name}" is in shims.host, but ${file} is not read-only for every pod of the project, so a pod could have written it.`, {
-      hint: `Add "package.json" to "readOnly" in ${CONFIG_FILE} (and the files the script runs), then ${bold('claude-pod trust')}. A pod started before that can write it until it exits; if it does, the shims refuse the file until you approve it again.`,
+      hint: `Add "package.json" to "readOnly" in ${CONFIG_FILE} (and the files the script runs), then ${bold('airlock trust')}. A pod started before that can write it until it exits; if it does, the shims refuse the file until you approve it again.`,
     });
   }
   let scripts;
@@ -244,11 +244,11 @@ const podCwd = (realCwd, root) => (findUp(realCwd, hasConfig) === root ? realCwd
 // Where a shimmed command goes:
 //   { to: 'host', args, keepShims }              the real binary, with these args; keepShims: give
 //                                                its children the shims (in an opted-in project)
-//   { to: 'script', root, name, script, extra }  a shims.host script, run by claude-pod with /bin/sh
-//   { to: 'pod', cwd }                           `claude-pod exec --no-ports` from `cwd`
+//   { to: 'script', root, name, script, extra }  a shims.host script, run by airlock with /bin/sh
+//   { to: 'pod', cwd }                           `airlock exec --no-ports` from `cwd`
 // or throws a CliError when it must not run at all.
 // `node <file>` is decided by where <file> is: in an opted-in project and writable by a pod → the
-// pod; anywhere else (a global CLI, claude-pod itself, a locked script) → the host, which runs the
+// pod; anywhere else (a global CLI, airlock itself, a locked script) → the host, which runs the
 // real path checked here (so a symlink flipped in between changes nothing).
 export function route(tool, args, cwd) {
   let realCwd;
@@ -300,7 +300,7 @@ function realBinary(tool) {
       // not here
     }
   }
-  throw new CliError(`${tool} not found on PATH after the claude-pod shims.`);
+  throw new CliError(`${tool} not found on PATH after the airlock shims.`);
 }
 
 // The PATH to hand to what runs on the host in an opted-in project: the one you started with,
@@ -344,19 +344,19 @@ function runChild(cmd, args, { ipcFd = null, ...opts } = {}) {
 }
 
 // The exit code for `shimMain`, or { signal } when the child was killed by one: the launcher's
-// node then dies by the same signal (see bin/claude-pod-shim.js), as the real command would have.
+// node then dies by the same signal (see bin/airlock-shim.js), as the real command would have.
 const outcome = ({ code, signal }) => (signal ? { signal } : code);
 
 export async function shimMain(tool, args) {
   // Set by the launcher: the PATH it was started with, a parent's IPC fd for `node`, and a flag
   // that catches it finding itself on PATH. The commands we start must not inherit them.
-  const shimPath = process.env.CLAUDE_POD_SHIM_PATH;
-  const ipc = /^[3-9]$|^[1-9][0-9]$/.test(process.env.CLAUDE_POD_CHANNEL_FD ?? '') ? Number(process.env.CLAUDE_POD_CHANNEL_FD) : null;
-  delete process.env.CLAUDE_POD_IN_SHIM;
-  delete process.env.CLAUDE_POD_SHIM_PATH;
-  delete process.env.CLAUDE_POD_CHANNEL_FD;
+  const shimPath = process.env.AIRLOCK_SHIM_PATH;
+  const ipc = /^[3-9]$|^[1-9][0-9]$/.test(process.env.AIRLOCK_CHANNEL_FD ?? '') ? Number(process.env.AIRLOCK_CHANNEL_FD) : null;
+  delete process.env.AIRLOCK_IN_SHIM;
+  delete process.env.AIRLOCK_SHIM_PATH;
+  delete process.env.AIRLOCK_CHANNEL_FD;
   try {
-    if (!SHIM_TOOLS.includes(tool)) throw new CliError(`claude-pod has no shim for ${tool}.`);
+    if (!SHIM_TOOLS.includes(tool)) throw new CliError(`airlock has no shim for ${tool}.`);
     let cwd;
     try {
       cwd = process.cwd();
@@ -375,15 +375,15 @@ export async function shimMain(tool, args) {
       const env = { ...process.env, PATH: hostPath(shimPath), npm_lifecycle_event: where.name };
       return outcome(await runChild('/bin/sh', ['-c', command], { cwd: where.root, env }));
     }
-    // In this process rather than a second `claude-pod`: one launcher forwarding Ctrl-C to docker,
-    // as with a plain `claude-pod exec`. No keychain secrets: every `pnpm install` would hand them
-    // to postinstall scripts. An explicit `claude-pod exec` still gets them.
+    // In this process rather than a second `airlock`: one launcher forwarding Ctrl-C to docker,
+    // as with a plain `airlock exec`. No keychain secrets: every `pnpm install` would hand them
+    // to postinstall scripts. An explicit `airlock exec` still gets them.
     return await launch({
       mode: 'exec', command: [tool, ...args], cwd: where.cwd, usesClaude: false, publishPorts: false, secrets: false, quiet: true,
     });
   } catch (e) {
     if (!(e instanceof CliError)) throw e;
-    err(`claude-pod shim: ${clean(e.message)}`);
+    err(`airlock shim: ${clean(e.message)}`);
     if (e.hint) process.stderr.write(`  ${e.hint}\n`);
     return e.exitCode;
   }

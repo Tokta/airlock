@@ -8,7 +8,7 @@ import { hostSettingsPath } from '../paths.js';
 import { createExclusive, isInside, kind, readRegularFile, realpathLoose, writeFileAtomic } from '../safefs.js';
 import { CliError } from '../ui.js';
 
-export const RUN_HELP = `Usage: claude-pod run (--prompt-file FILE | --prompt TEXT) [options] [-- <extra claude args>]
+export const RUN_HELP = `Usage: airlock run (--prompt-file FILE | --prompt TEXT) [options] [-- <extra claude args>]
 
 Runs one headless Claude task in a fresh pod:
   claude --print --dangerously-skip-permissions --output-format <fmt> [--model M] [extra args]
@@ -24,7 +24,7 @@ Options:
   --ports                publish the config's ports (off by default for headless runs)
 
 FILE and BASE must be in the system temp dir, /tmp, or a "runDirs" entry of
-~/.config/claude-pod/settings.json; FILE may also be inside the project, BASE may not.
+~/.config/airlock/settings.json; FILE may also be inside the project, BASE may not.
 Exits with Claude's exit code.`;
 
 const MAX_PROMPT = 5 * 1024 * 1024;
@@ -109,7 +109,7 @@ export async function run(argv) {
     code = await launch({ ...common, stdio: ['ignore', outFd, errFd] });
   } catch (e) {
     // Record launcher failures where the caller will look for them.
-    fs.writeSync(errFd, `claude-pod: ${e.message}\n${e.hint ? `${e.hint}\n` : ''}`);
+    fs.writeSync(errFd, `airlock: ${e.message}\n${e.hint ? `${e.hint}\n` : ''}`);
     code = e.exitCode ?? 1;
     throw e;
   } finally {

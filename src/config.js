@@ -9,7 +9,7 @@ import { readOnlyPath, runningReadOnly } from './protect.js';
 import { ensurePrivateDir, isInside, kind, readRegularFile, writeFileAtomic } from './safefs.js';
 import { CliError } from './ui.js';
 
-// SECURITY: claude-pod.config.json lives in the project, which every pod can write. So a config
+// SECURITY: airlock.config.json lives in the project, which every pod can write. So a config
 // is only honoured once you have approved its exact bytes (see isTrusted), and even then it is
 // validated to keep the pod's isolation intact: bridge-type networks only, an envFile inside the
 // project, no host environment variables, no reserved env names, readOnly paths inside the project.
@@ -28,7 +28,7 @@ function findUp(start, test) {
 
 // Resolves which folder gets mounted into the pod. Agents launch from the project root, from a
 // subfolder, after a `cd`, or not — so we never trust the cwd alone:
-//   1. the nearest ancestor with a claude-pod.config.json (explicit opt-in wins),
+//   1. the nearest ancestor with a airlock.config.json (explicit opt-in wins),
 //   2. else the nearest git root (`.git` dir, or file for worktrees/submodules),
 //   3. else the cwd itself (rejected later by assertSafeRoot unless it's a project).
 export function findProjectRoot(cwd = process.cwd()) {
@@ -46,26 +46,26 @@ const HOME_MARKERS = ['.ssh', '.aws', '.gnupg'];
 
 // Refuses to mount anything that would hand the pod more than one project: /, your home, any
 // ancestor of your home, a home-like folder, or a folder that isn't a project at all (no .git
-// and no claude-pod.config.json — e.g. ~/Documents holding many projects).
+// and no airlock.config.json — e.g. ~/Documents holding many projects).
 export function assertSafeRoot(root, { requireProject = true } = {}) {
   const real = fs.realpathSync(root);
   const home = fs.realpathSync(os.homedir());
   const refuse = (why) => new CliError(`Refusing to mount ${real} into the pod: ${why}.`, {
-    hint: 'cd into a project folder first (a git repo, or run `claude-pod init` in it).',
+    hint: 'cd into a project folder first (a git repo, or run `airlock init` in it).',
   });
   if (real === path.parse(real).root) throw refuse('it is the filesystem root');
   if (isInside(home, real)) throw refuse(real === home ? 'it is your home directory' : 'it contains your home directory');
   const marker = HOME_MARKERS.find((m) => kind(path.join(real, m)) !== 'missing');
   if (marker) throw refuse(`it contains ${marker}, so it looks like a home directory`);
   if (requireProject && kind(path.join(real, '.git')) === 'missing' && kind(path.join(real, CONFIG_FILE)) === 'missing') {
-    throw refuse('it is not a git repository and has no claude-pod.config.json');
+    throw refuse('it is not a git repository and has no airlock.config.json');
   }
 }
 
 const KNOWN_KEYS = new Set(['network', 'ports', 'envFile', 'env', 'resources', 'readOnly', 'secrets', 'shims']);
 
 // Env names the launcher sets itself, or that would change how Claude authenticates/stores state.
-const RESERVED_ENV = /^(HOME|CLAUDE_POD(_.*)?|CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_.*)$/;
+const RESERVED_ENV = /^(HOME|AIRLOCK(_.*)?|CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_.*)$/;
 
 // Docker network names; excludes `host`, `container:<id>` and anything else with special meaning.
 // The driver is checked against Docker at launch (assertNetwork).
@@ -128,7 +128,7 @@ function validate(raw, file) {
     if (raw.env === null || typeof raw.env !== 'object' || Array.isArray(raw.env)) throw bad('"env" must be an object.');
     for (const [k, v] of Object.entries(raw.env)) {
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw bad(`"env" key "${k}" is not a valid variable name.`);
-      if (RESERVED_ENV.test(k)) throw bad(`"env.${k}" is reserved by claude-pod.`);
+      if (RESERVED_ENV.test(k)) throw bad(`"env.${k}" is reserved by airlock.`);
       if (typeof v !== 'string') throw bad(`"env.${k}" must be a string.`);
     }
   }
@@ -234,7 +234,7 @@ export function loadConfig({ root, configPath }) {
 }
 
 // ── Trust records ─────────────────────────────────────────────────────────────────────────────
-// Stored host-only (~/.config/claude-pod/trust/), keyed by project path: the sha256 of the config
+// Stored host-only (~/.config/airlock/trust/), keyed by project path: the sha256 of the config
 // bytes you approved. Any change — by you or by a pod — needs approving again.
 
 const trustFile = (root) => path.join(trustDir(), `${sha256(root)}.json`);
@@ -334,7 +334,7 @@ export function readOnlyChanged(root, rel) {
   return false;
 }
 
-// The watched "readOnly" entries that no longer match what you approved, for `claude-pod trust`.
+// The watched "readOnly" entries that no longer match what you approved, for `airlock trust`.
 export function changedReadOnly(root, readOnly) {
   const watch = trustRecord(root)?.watch ?? {};
   return readOnly.filter((rel) => {
@@ -404,7 +404,7 @@ export function shimsOffWarning(root, config) {
     : `This config has no "shims", and it is inside ${d}, which has them. Approving it runs pnpm, npm, node & co. on the host in this folder. A pod of ${d} may have planted it.`;
 }
 
-// For `claude-pod shims --forget`: the project removed its config or "shims" on purpose.
+// For `airlock shims --forget`: the project removed its config or "shims" on purpose.
 export function forgetShims(root) {
   const rec = trustRecord(root);
   if (!rec?.shims) return false;

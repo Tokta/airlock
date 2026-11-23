@@ -6,18 +6,18 @@ import {
 import { canPrompt, readSecret } from '../prompt.js';
 import { CliError, bold, ok, warn } from '../ui.js';
 
-export const SECRET_HELP = `Usage: claude-pod secret set NAME | list [--all] | rm NAME
+export const SECRET_HELP = `Usage: airlock secret set NAME | list [--all] | rm NAME
 
 Keeps this project's API keys in the macOS login keychain instead of a plaintext .env.
-Names listed under "secrets" in claude-pod.config.json are fetched at launch and handed to
+Names listed under "secrets" in airlock.config.json are fetched at launch and handed to
 \`shell\` and \`exec\` pods (never \`claude\` or \`run\` pods) through a private env-file.
 
-  set NAME   store a value: typed with hidden input, or piped (\`claude-pod secret set X < file\`)
+  set NAME   store a value: typed with hidden input, or piped (\`airlock secret set X < file\`)
   list       this project's stored names (never values), and whether the config uses them;
              --all: every project's, as <project key>/<NAME>
   rm NAME    delete one
 
-Each is a generic password with service "claude-pod" and an account named after this project's
+Each is a generic password with service "airlock" and an account named after this project's
 path, so one project can never read another's; after moving or renaming a project, set them again.
 Values are printable ASCII. Any process on the host running as you can read them without a
 prompt, as with a .env file. macOS only for now.`;
@@ -29,7 +29,7 @@ async function readAll(stream) {
 }
 
 function checkName(name) {
-  if (name === undefined) throw new CliError('Name the secret, e.g. claude-pod secret set RESEND_API_KEY.');
+  if (name === undefined) throw new CliError('Name the secret, e.g. airlock secret set RESEND_API_KEY.');
   const error = secretNameError(name);
   if (error) throw new CliError(`Secret name ${JSON.stringify(name)} ${error}.`);
   return name;
@@ -71,7 +71,7 @@ export async function secret(argv) {
     let value;
     if (!process.stdin.isTTY) value = (await readAll(process.stdin)).replace(/\r?\n$/, '');
     else if (canPrompt()) value = await readSecret(`${name}: `);
-    else throw new CliError('No value given.', { hint: `Pipe it in: claude-pod secret set ${name} < file` });
+    else throw new CliError('No value given.', { hint: `Pipe it in: airlock secret set ${name} < file` });
     const error = secretValueError(value);
     if (error) throw new CliError(`The value for ${name} ${error}.`);
     const had = hasSecret(root, name);

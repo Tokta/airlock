@@ -1,4 +1,4 @@
-// Host-only state (~/.config/claude-pod): never mounted into a pod, so a pod can't read or forge it.
+// Host-only state (~/.config/airlock): never mounted into a pod, so a pod can't read or forge it.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,7 +32,7 @@ export function saveToken(token) {
 }
 
 // ── Host settings ─────────────────────────────────────────────────────────────────────────────
-// ~/.config/claude-pod/settings.json, e.g. {"runDirs": ["/Users/me/scratch"]}
+// ~/.config/airlock/settings.json, e.g. {"runDirs": ["/Users/me/scratch"]}
 
 function hostSettings() {
   try {
@@ -51,9 +51,9 @@ function realOrNull(p) {
   }
 }
 
-// Where `claude-pod run` may read --prompt-file and write --out: the system temp dirs (agent
+// Where `airlock run` may read --prompt-file and write --out: the system temp dirs (agent
 // scratchpads live there) plus any `runDirs` you list. Stops an orchestrating agent that is
-// auto-approved for `claude-pod run` from using it to ship arbitrary host files (~/.ssh/…) into a
+// auto-approved for `airlock run` from using it to ship arbitrary host files (~/.ssh/…) into a
 // pod, or to write output files anywhere.
 export function allowedRunDirs() {
   const dirs = [os.tmpdir(), '/tmp', '/var/tmp'];

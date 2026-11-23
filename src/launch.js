@@ -34,7 +34,7 @@ export function containerExists(name) {
 
 export function podName(root) {
   const slug = path.basename(root).toLowerCase().replace(/[^a-z0-9_.-]+/g, '-').replace(/^[-.]+/, '').slice(0, 30) || 'project';
-  return `claude-pod-${slug}-${crypto.randomBytes(3).toString('hex')}`;
+  return `airlock-${slug}-${crypto.randomBytes(3).toString('hex')}`;
 }
 
 // Host overrides from the old per-project scripts. They can only narrow or cap, and are validated.
@@ -55,7 +55,7 @@ async function ensureTrusted(root, config) {
   if (!config.file || isTrusted(root, config.hash)) return;
   if (!canPrompt()) {
     throw new CliError(`${config.file} is new or has changed since you approved it.`, {
-      hint: `Review it (a pod can edit it), then run ${bold('claude-pod trust')} in a terminal. Unattended runs never approve configs.`,
+      hint: `Review it (a pod can edit it), then run ${bold('airlock trust')} in a terminal. Unattended runs never approve configs.`,
     });
   }
   warn(`${config.file} is new or has changed since you approved it. A pod can edit this file, so review it:`);
@@ -96,7 +96,7 @@ function writeGitIdentity(stateDir) {
   const quote = (v) => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   const name = get('user.name');
   const email = get('user.email');
-  const lines = ['# Written by claude-pod on every launch.'];
+  const lines = ['# Written by airlock on every launch.'];
   if (name || email) lines.push('[user]');
   if (name) lines.push(`\tname = ${quote(name)}`);
   if (email) lines.push(`\temail = ${quote(email)}`);
@@ -134,7 +134,7 @@ function cacheEnv(root) {
 // pnpm_config_store_dir unless the config sets it itself.
 function podEnvFor(root, configEnv) {
   const { env, oldPnpm } = cacheEnv(root);
-  const merged = { ...env, ...configEnv, GIT_CONFIG_GLOBAL: '/home/claude-pod/.claude/gitconfig' };
+  const merged = { ...env, ...configEnv, GIT_CONFIG_GLOBAL: '/home/airlock/.claude/gitconfig' };
   if (oldPnpm && !Object.hasOwn(configEnv, 'npm_config_store_dir')) merged.npm_config_store_dir = merged.pnpm_config_store_dir;
   return merged;
 }
@@ -160,18 +160,18 @@ function readSecrets(root, names, usesClaude, command) {
       if (!(e instanceof CliError)) throw e;
       error = `can't be read (${e.message})`;
     }
-    if (error) warn(`secret ${name} ${error}; starting without it (${bold(`claude-pod secret set ${name}`)}).`);
+    if (error) warn(`secret ${name} ${error}; starting without it (${bold(`airlock secret set ${name}`)}).`);
   }
   // `exec claude` is not a Claude pod as far as the launcher knows: say where the keys are going.
   // Only a direct `claude` is caught (not `npx claude` or `bash -c claude`); the docs and guide
-  // tell agents to use `claude-pod run` instead.
+  // tell agents to use `airlock run` instead.
   if (Object.keys(out).length && path.basename(command[0] || '') === 'claude') {
-    warn(`this pod runs claude with the project's secrets (${Object.keys(out).join(', ')})${out.ANTHROPIC_API_KEY ? '; ANTHROPIC_API_KEY bills it to the API' : ''}. Use ${bold('claude-pod claude')} for an agent.`);
+    warn(`this pod runs claude with the project's secrets (${Object.keys(out).join(', ')})${out.ANTHROPIC_API_KEY ? '; ANTHROPIC_API_KEY bills it to the API' : ''}. Use ${bold('airlock claude')} for an agent.`);
   }
   return out;
 }
 
-// Whether our own stdin is a pipe, a file or a socket (`echo x | claude-pod exec cat`, a hook fed
+// Whether our own stdin is a pipe, a file or a socket (`echo x | airlock exec cat`, a hook fed
 // JSON): docker forwards it only with -i. Not /dev/null or a closed stdin.
 function stdinCarriesData() {
   try {
@@ -188,7 +188,7 @@ function envFileContent(env) {
 }
 
 // Starts a pod for the project containing `cwd` and resolves to the exit code of `command`.
-//   mode           label value shown by `claude-pod ps` (shell | claude | exec | run)
+//   mode           label value shown by `airlock ps` (shell | claude | exec | run)
 //   usesClaude     pass the login token (and warn when there's none); false for shell/exec
 //   publishPorts   publish the config's ports on loopback (fixed ones on their own number)
 //   ownFixedPorts  publish fixed ports as themselves (exec, shell); agent pods get random ones
@@ -218,12 +218,12 @@ export async function launch({
   // Only pods that run Claude get the login token: anything in the pod can read it, and a package
   // under `exec pnpm dev` or a `shell` has no use for it.
   const token = usesClaude ? readToken() : null;
-  if (usesClaude && !token) warn(`No login token. Run ${bold('claude-pod auth')} first.`);
+  if (usesClaude && !token) warn(`No login token. Run ${bold('airlock auth')} first.`);
 
   let ports = [];
   if (publishPorts && config.ports.length) {
     if (config.network === 'none') warn('Network is "none": not publishing any ports.');
-    else ports = await allocatePorts(config.ports, { ownFixed: ownFixedPorts, busyHint: `claude-pod ${mode} --no-ports` });
+    else ports = await allocatePorts(config.ports, { ownFixed: ownFixedPorts, busyHint: `airlock ${mode} --no-ports` });
   }
 
   const name = podName(root);
@@ -264,15 +264,15 @@ export async function launch({
   });
 
   if (!quiet) {
-    info(`claude-pod ${name}`);
-    detail(`project: ${clean(root)}${configPath ? '' : ' (no claude-pod.config.json)'}`);
+    info(`airlock ${name}`);
+    detail(`project: ${clean(root)}${configPath ? '' : ' (no airlock.config.json)'}`);
     if (config.network) detail(`network: ${config.network}`);
     if (Object.keys(secrets).length) detail(`secrets from the keychain: ${Object.keys(secrets).join(', ')}`);
     for (const { container, host } of ports) detail(`port ${container} → http://127.0.0.1:${host}`);
   }
   if (mode === 'shell') {
     const how = secrets.ANTHROPIC_API_KEY ? 'would run on ANTHROPIC_API_KEY (API billing) with the project\'s secrets' : 'is not logged in';
-    detail(`login: none in this pod, so \`claude\` here ${how}; use ${bold('claude-pod claude')}`);
+    detail(`login: none in this pod, so \`claude\` here ${how}; use ${bold('airlock claude')}`);
   }
 
   // The watchdog first: from the moment files are locked, something must be there to unlock them

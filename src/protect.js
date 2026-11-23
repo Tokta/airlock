@@ -8,7 +8,7 @@
 //   - The config's `readOnly` paths (scripts the host runs) are locked when they exist, and
 //     quarantined like the rest when a pod creates one.
 //   - Others can't be pre-created without side effects (an empty .mcp.json breaks Claude), so if a
-//     pod creates one it is renamed to `<name>.claude-pod-quarantine-<timestamp>` after the run.
+//     pod creates one it is renamed to `<name>.airlock-quarantine-<timestamp>` after the run.
 //   - On a case-insensitive file system (macOS) a read-only *file* mount can still be written
 //     through another spelling of its name (`.git/CONFIG`). Those files are copied to host-only
 //     state at launch and put back after the run if they changed (see snapshotFiles).
@@ -124,7 +124,7 @@ export function readOnlyPath(p) {
   if (typeof p !== 'string' || !p) return { error: 'must be a non-empty string' };
   // `:` would split docker's -v value; `\\` is a separator on Windows; newlines and NUL can't be
   // passed at all.
-  if (/[\0\n\r:\\]/.test(p)) return { error: 'contains a character claude-pod can\'t mount (`:`, `\\`, newline or NUL)' };
+  if (/[\0\n\r:\\]/.test(p)) return { error: 'contains a character airlock can\'t mount (`:`, `\\`, newline or NUL)' };
   if (path.isAbsolute(p) || p.startsWith('~')) return { error: 'must be relative to the project' };
   const parts = p.split('/').filter((s) => s && s !== '.');
   if (!parts.length) return { error: 'names the whole project' };
@@ -132,7 +132,7 @@ export function readOnlyPath(p) {
   // Lower-cased: macOS and Windows file systems ignore case, so `.GIT` is `.git` there.
   const lower = parts.map((s) => s.toLowerCase());
   if (lower.includes('node_modules')) return { error: 'must not be under node_modules' };
-  if (lower[0] === '.git') return { error: 'is under .git, which claude-pod already protects' };
+  if (lower[0] === '.git') return { error: 'is under .git, which airlock already protects' };
   return { rel: parts.join('/') };
 }
 
@@ -337,9 +337,9 @@ function plantedParent(root, rel) {
   return null;
 }
 
-// `<p>.claude-pod-quarantine-<timestamp>-<random>`. The random part means a pod can't put
+// `<p>.airlock-quarantine-<timestamp>-<random>`. The random part means a pod can't put
 // something at that name in advance to make the rename fail.
-const quarantineName = (p, stamp) => `${p}.claude-pod-quarantine-${stamp}-${crypto.randomBytes(4).toString('hex')}`;
+const quarantineName = (p, stamp) => `${p}.airlock-quarantine-${stamp}-${crypto.randomBytes(4).toString('hex')}`;
 
 // After a run: rename protected paths the pod created. rename() moves a symlink itself, never its
 // target. `extra` is the config's `readOnly` list, to name the entry a missing folder was recorded
@@ -445,7 +445,7 @@ function withLock(fn) {
       } catch {
         // gone already, or another waiter took it
       }
-      if (i > 400) throw new CliError(`${lock} is held by another claude-pod run.`, { hint: 'If no claude-pod is starting or stopping, remove that folder.' });
+      if (i > 400) throw new CliError(`${lock} is held by another airlock run.`, { hint: 'If no airlock is starting or stopping, remove that folder.' });
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
     }
   }

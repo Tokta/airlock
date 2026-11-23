@@ -42,12 +42,12 @@ async function setup({ install = true } = {}) {
   // The fake keychain in the shim's own node too: a shim pod must never read it.
   s.env.NODE_OPTIONS = `--import ${path.join(here, 'fixtures', 'fake-keychain.js')}`;
   s.shim = (tool, args, { cwd = s.project, env = s.env, input } = {}) => run(path.join(s.shims, tool), args, { cwd, env, input });
-  s.config = (obj) => fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), JSON.stringify(obj));
+  s.config = (obj) => fs.writeFileSync(path.join(s.project, 'airlock.config.json'), JSON.stringify(obj));
   s.write = (rel, text, mode = 0o644) => {
     fs.mkdirSync(path.dirname(path.join(s.project, rel)), { recursive: true });
     fs.writeFileSync(path.join(s.project, rel), text, { mode });
   };
-  s.cmd = (i) => { const a = s.runs()[i].args; return a.slice(a.indexOf('claude-pod') + 1); };
+  s.cmd = (i) => { const a = s.runs()[i].args; return a.slice(a.indexOf('airlock') + 1); };
   if (install) assert.equal((await cli(['shims'], { cwd: s.project, env: s.env })).code, 0);
   return s;
 }
@@ -63,11 +63,11 @@ async function asHome(s, fn) {
   }
 }
 
-test('shims: writes executable launchers that start claude-pod on an absolute node', async () => {
+test('shims: writes executable launchers that start airlock on an absolute node', async () => {
   const s = await setup({ install: false });
   const res = await cli(['shims'], { cwd: s.project, env: s.env });
   assert.equal(res.code, 0, res.stderr);
-  assert.equal(res.stdout, 'export PATH="$HOME/.config/claude-pod/shims:$PATH"\n');
+  assert.equal(res.stdout, 'export PATH="$HOME/.config/airlock/shims:$PATH"\n');
   for (const tool of TOOLS) {
     assert.equal(fs.statSync(path.join(s.shims, tool)).mode & 0o777, 0o700, tool);
     assert.ok(fs.readFileSync(path.join(s.shims, tool), 'utf8').includes(`node='${process.execPath}'`), tool);
@@ -93,8 +93,8 @@ test('shims route: no config or no "shims" → the real binary; untrusted or unr
   assert.equal(res.code, 1);
   assert.equal(res.stdout, '');
   assert.match(res.stderr, /is new or has changed since you approved it, so pnpm doesn't run/);
-  assert.match(res.stderr, /claude-pod trust/);
-  fs.writeFileSync(path.join(s.project, 'claude-pod.config.json'), '{"shims": ');
+  assert.match(res.stderr, /airlock trust/);
+  fs.writeFileSync(path.join(s.project, 'airlock.config.json'), '{"shims": ');
   res = await s.shim('pnpm', ['dev']);
   assert.equal(res.code, 1);
   assert.match(res.stderr, /can't be read, so pnpm doesn't run/);
@@ -115,10 +115,10 @@ test('shims route: everything but host scripts and host node files is exec --no-
     const { args: argv, envFile } = s.runs()[i];
     assert.ok(!argv.includes('-p'), 'no ports: never fights the dev server for 3000');
     assert.ok(!argv.includes('-i'), 'stdin is /dev/null: nothing to forward');
-    assert.equal(argv[argv.indexOf('--label') + 5], 'claude-pod.mode=exec');
+    assert.equal(argv[argv.indexOf('--label') + 5], 'airlock.mode=exec');
     assert.deepEqual(s.cmd(i), [tool, ...args]);
     assert.doesNotMatch(envFile, /API_KEY|the-key/);
-    assert.doesNotMatch(res.stderr, /claude-pod-app|project:/, 'no banner');
+    assert.doesNotMatch(res.stderr, /airlock-app|project:/, 'no banner');
   }
   // An explicit exec still gets the secrets.
   assert.equal((await cli(['exec', 'true'], { cwd: s.project, env: s.env })).code, 0);
@@ -131,7 +131,7 @@ test('shims route: everything but host scripts and host node files is exec --no-
   assert.ok(!s.runs().at(-1).args.includes('-t'));
 });
 
-test('shims route: a host script is run by claude-pod with /bin/sh, from a read-only package.json', async () => {
+test('shims route: a host script is run by airlock with /bin/sh, from a read-only package.json', async () => {
   const s = await setup();
   s.config({ readOnly: ['package.json'], shims: { host: ['dev', 'deploy:prod', 'start', 'deploy', 'nope'] } });
   await trustConfig(s);
@@ -194,22 +194,22 @@ test('shims route: a host script whose package.json a pod could write is refused
   s.config({ readOnly: ['package.json'], shims: { host: ['dev'] } });
   await trustConfig(s);
   const protect = await import('../src/protect.js');
-  await asHome(s, () => protect.recordPending(s.project, 'claude-pod-app-old', [], { extra: [] }));
+  await asHome(s, () => protect.recordPending(s.project, 'airlock-app-old', [], { extra: [] }));
   res = await s.shim('pnpm', ['dev']);
   assert.equal(res.code, 1);
   assert.match(res.stderr, /not read-only for every pod/);
-  await asHome(s, () => protect.clearPending('claude-pod-app-old'));
+  await asHome(s, () => protect.clearPending('airlock-app-old'));
 
   // Listed in readOnly, but missing when a running pod started: that pod may have written it.
   s.config({ readOnly: ['package.json'], shims: { host: ['dev'] } });
   await trustConfig(s);
   assert.equal((await s.shim('pnpm', ['dev'])).stdout, 'ran\n');
   const { recordPending, clearPending } = await import('../src/protect.js');
-  await asHome(s, () => recordPending(s.project, 'claude-pod-app-aaaaaa', ['package.json']));
+  await asHome(s, () => recordPending(s.project, 'airlock-app-aaaaaa', ['package.json']));
   res = await s.shim('pnpm', ['dev']);
   assert.equal(res.code, 1);
   assert.match(res.stderr, /not read-only/);
-  await asHome(s, () => clearPending('claude-pod-app-aaaaaa'));
+  await asHome(s, () => clearPending('airlock-app-aaaaaa'));
 });
 
 test('shims route: node <file> runs on the host only for files no pod can write', async () => {
@@ -248,11 +248,11 @@ test('shims route: node <file> runs on the host only for files no pod can write'
   // A "readOnly" folder a running pod found missing may be that pod's work.
   s.write('tools/t.js', '');
   const { recordPending, clearPending } = await import('../src/protect.js');
-  await asHome(s, () => recordPending(s.project, 'claude-pod-app-bbbbbb', ['tools']));
+  await asHome(s, () => recordPending(s.project, 'airlock-app-bbbbbb', ['tools']));
   const before = s.runs().length;
   res = await s.shim('node', ['tools/t.js']);
   assert.equal(s.runs().length, before + 1, res.stderr);
-  await asHome(s, () => clearPending('claude-pod-app-bbbbbb'));
+  await asHome(s, () => clearPending('airlock-app-bbbbbb'));
   assert.ok(!fs.existsSync(path.join(s.project, 'tools')), 'quarantined when that pod run ended');
   s.write('tools/t.js', '');
   res = await s.shim('node', ['tools/t.js']);
@@ -300,13 +300,13 @@ test('shims route: node <file> runs on the host only for files no pod can write'
   }
 
   // A "readOnly" entry a running pod started without (an older config) is not locked for it.
-  await asHome(s, () => recordPending(s.project, 'claude-pod-app-cccccc', [], { extra: ['tools'] }));
+  await asHome(s, () => recordPending(s.project, 'airlock-app-cccccc', [], { extra: ['tools'] }));
   res = await s.shim('node', ['scripts/x.js']);
   assert.match(res.stdout, /^stdin:/, 'to the pod while that run lasts');
-  await asHome(s, () => clearPending('claude-pod-app-cccccc'));
+  await asHome(s, () => clearPending('airlock-app-cccccc'));
 });
 
-test('shims: the launcher drops relative PATH entries, and survives claude-pod or its node being gone', async () => {
+test('shims: the launcher drops relative PATH entries, and survives airlock or its node being gone', async () => {
   const s = await setup();
   s.write('node_modules/.bin/pnpm', '#!/bin/sh\necho planted\n', 0o755);
   let res = await s.shim('pnpm', ['-v'], { env: { ...s.env, PATH: `node_modules/.bin:${s.env.PATH}` } });
@@ -327,12 +327,12 @@ test('shims: the launcher drops relative PATH entries, and survives claude-pod o
   fs.symlinkSync(process.execPath, path.join(onlyNode, 'node'));
   res = await run(path.join(dir, 'pnpm'), ['-v'], { cwd: s.project, env: { ...env, PATH: [dir, onlyNode, '/usr/bin', '/bin'].join(':') } });
   assert.equal(res.code, 1, 'no real pnpm on this PATH: but the shim itself ran');
-  assert.match(res.stderr, /pnpm not found on PATH after the claude-pod shims/);
+  assert.match(res.stderr, /pnpm not found on PATH after the airlock shims/);
 });
 
 test('shims: a launcher that finds itself again on PATH stops instead of looping', async () => {
   const s = await setup();
-  const res = await s.shim('node', ['-v'], { env: { ...s.env, CLAUDE_POD_IN_SHIM: '1' } });
+  const res = await s.shim('node', ['-v'], { env: { ...s.env, AIRLOCK_IN_SHIM: '1' } });
   assert.equal(res.code, 127);
   assert.match(res.stderr, /found the shims again on PATH/);
   // A trailing slash on the PATH entry is still recognised as the shims folder.
@@ -360,7 +360,7 @@ test('shims: a pod can\'t turn an opted-in project\'s shims off by editing or de
   const s = await setup();
   s.config({ shims: { host: [] } });
   await trustConfig(s);
-  const file = path.join(s.project, 'claude-pod.config.json');
+  const file = path.join(s.project, 'airlock.config.json');
 
   s.config({}); // "shims" removed, not approved
   let res = await s.shim('pnpm', ['install']);
@@ -371,11 +371,11 @@ test('shims: a pod can\'t turn an opted-in project\'s shims off by editing or de
   assert.match(res.stderr, /is still there, so there's nothing to forget/);
 
   fs.mkdirSync(path.join(s.project, 'sub'));
-  fs.writeFileSync(path.join(s.project, 'sub', 'claude-pod.config.json'), '{}'); // planted nearer config
+  fs.writeFileSync(path.join(s.project, 'sub', 'airlock.config.json'), '{}'); // planted nearer config
   res = await s.shim('pnpm', ['install'], { cwd: path.join(s.project, 'sub') });
   assert.equal(res.code, 1);
-  assert.match(res.stderr, /sub\/claude-pod.config.json is new or has changed/);
-  fs.rmSync(path.join(s.project, 'sub', 'claude-pod.config.json'));
+  assert.match(res.stderr, /sub\/airlock.config.json is new or has changed/);
+  fs.rmSync(path.join(s.project, 'sub', 'airlock.config.json'));
 
   fs.rmSync(file); // config deleted
   res = await s.shim('pnpm', ['install']);
@@ -387,7 +387,7 @@ test('shims: a pod can\'t turn an opted-in project\'s shims off by editing or de
   // Neither init (a fresh trusted config) nor an unattended --forget ends the opt-in.
   res = await cli(['init'], { cwd: s.project, env: s.env });
   assert.equal(res.code, 1);
-  assert.match(res.stderr, /had a claude-pod.config.json with "shims", and it is gone/);
+  assert.match(res.stderr, /had a airlock.config.json with "shims", and it is gone/);
   assert.ok(!fs.existsSync(file));
   res = await cli(['shims', '--forget'], { cwd: s.project, env: s.env });
   assert.equal(res.code, 1);
@@ -473,7 +473,7 @@ test('shims: what runs on the host keeps the shims, never loops, dies by the sam
 
 test('shims: outside opted-in projects the launcher runs the real command without starting node', async () => {
   const s = await setup();
-  // A launcher whose claude-pod is gone says so whenever it gets past the fast path.
+  // A launcher whose airlock is gone says so whenever it gets past the fast path.
   const dir = path.join(s.dir, 'alt-shims');
   fs.mkdirSync(dir);
   const env = { ...s.env, PATH: s.env.PATH.replace(s.shims, dir) };
@@ -490,7 +490,7 @@ test('shims: outside opted-in projects the launcher runs the real command withou
   // An opted-in project whose config is gone, reached through a symlink: still the slow path.
   s.config({ shims: {} });
   await trustConfig(s);
-  fs.rmSync(path.join(s.project, 'claude-pod.config.json'));
+  fs.rmSync(path.join(s.project, 'airlock.config.json'));
   fs.mkdirSync(path.join(s.project, 'sub'));
   fs.symlinkSync(s.project, path.join(s.dir, 'link-to-app'));
   res = await pnpm(path.join(s.dir, 'link-to-app', 'sub'));
@@ -521,7 +521,7 @@ test('shims: a readOnly file a stale pod changed after you approved it is refuse
   // A pod started under that config (no readOnly) is running when you approve the next one.
   const protect = await import('../src/protect.js');
   const c = await import('../src/config.js');
-  await asHome(s, () => protect.recordPending(s.project, 'claude-pod-app-stale', [], { extra: [] }));
+  await asHome(s, () => protect.recordPending(s.project, 'airlock-app-stale', [], { extra: [] }));
   s.config({ readOnly: ['package.json', 'scripts'], shims: { host: ['dev'] } });
   await trustConfig(s);
   let res = await s.shim('pnpm', ['dev']);
@@ -536,12 +536,12 @@ test('shims: a readOnly file a stale pod changed after you approved it is refuse
   await trustConfig(s);
   s.config({ readOnly: ['package.json', 'scripts'], shims: { host: ['dev'] } });
   await trustConfig(s);
-  await asHome(s, () => protect.clearPending('claude-pod-app-stale'));
+  await asHome(s, () => protect.clearPending('airlock-app-stale'));
   res = await s.shim('pnpm', ['dev']);
   assert.equal(res.code, 1);
   assert.equal(res.stdout, '');
-  assert.match(res.stderr, /package.json changed after you approved claude-pod.config.json, while a pod that could still write it was running/);
-  assert.match(res.stderr, /claude-pod trust/);
+  assert.match(res.stderr, /package.json changed after you approved airlock.config.json, while a pod that could still write it was running/);
+  assert.match(res.stderr, /airlock trust/);
   // scripts/ didn't change: it runs on the host, and stops being watched.
   res = await s.shim('node', ['scripts/x.js']);
   assert.equal(res.stdout, `host-node ${path.join(s.project, 'scripts', 'x.js')}\n`, res.stderr);
@@ -550,7 +550,7 @@ test('shims: a readOnly file a stale pod changed after you approved it is refuse
   s.config({ readOnly: ['package.json', 'scripts'], shims: { host: ['dev'] }, env: {} });
   await trustConfig(s);
   assert.equal((await s.shim('pnpm', ['dev'])).code, 1);
-  // `claude-pod trust` asks about it; without a terminal it refuses.
+  // `airlock trust` asks about it; without a terminal it refuses.
   res = await cli(['trust'], { cwd: s.project, env: s.env });
   assert.equal(res.code, 1);
   assert.match(res.stderr, /package.json changed while a pod that could write them was running/);

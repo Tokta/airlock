@@ -262,7 +262,7 @@ test('readOnly: what a pod creates is quarantined, never through a planted symli
   assert.equal(moved.length, 2);
   assert.ok(!fs.existsSync(path.join(root, 'Makefile')));
   assert.equal(kind(path.join(root, 'scripts')), 'missing', 'the symlink itself was renamed');
-  assert.ok(moved.some((m) => path.basename(m).startsWith('scripts.claude-pod-quarantine-')));
+  assert.ok(moved.some((m) => path.basename(m).startsWith('scripts.airlock-quarantine-')));
   assert.equal(fs.readFileSync(path.join(host, 'deploy.sh'), 'utf8'), 'HOST FILE', 'host file not moved');
   assert.deepEqual(fs.readdirSync(host), ['deploy.sh']);
 });
@@ -367,7 +367,7 @@ test('a read-only file changed during the run is put back, and the changed one k
   assert.equal(fs.readFileSync(config, 'utf8'), '[core]\n');
   assert.equal(kind(script), 'file');
   assert.equal(fs.statSync(script).mode & 0o777, 0o755, 'mode restored');
-  const kept = fs.readdirSync(path.join(root, '.git')).filter((f) => f.startsWith('config.claude-pod-quarantine-'));
+  const kept = fs.readdirSync(path.join(root, '.git')).filter((f) => f.startsWith('config.airlock-quarantine-'));
   assert.equal(kept.length, 1);
   assert.match(fs.readFileSync(path.join(root, '.git', kept[0]), 'utf8'), /fsmonitor = evil/);
   assert.ok(fs.readFileSync('/etc/passwd', 'utf8').length > 0, 'symlink target untouched');
@@ -493,7 +493,7 @@ test('beginRun leaves a file you made immutable yourself, and refuses when it ca
   f.set.add(config); // yours
   assert.throws(() => beginRun(root, 'pod-a', { missing: [], readOnly: [config, mcp], extra: [] }), /Could not make .*\.mcp\.json immutable/);
   assert.ok(f.set.has(config), 'still yours');
-  assert.equal(kind(path.join(process.env.HOME, '.config', 'claude-pod', 'pending', 'pod-a.json')), 'missing', 'no record left');
+  assert.equal(kind(path.join(process.env.HOME, '.config', 'airlock', 'pending', 'pod-a.json')), 'missing', 'no record left');
   f.set.delete(config);
   const run = beginRun(root, 'pod-b', { missing: [], readOnly: [config], extra: [] });
   assert.deepEqual(run.locked, [config]);
@@ -524,7 +524,7 @@ test('a folder at a predictable quarantine name does not stop the restore', (t) 
   const files = snapshotFiles(root, [config], 'pod-q', always);
   fs.writeFileSync(config, '[core]\n\tfsmonitor = evil\n');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  fs.mkdirSync(path.join(root, '.git', `config.claude-pod-quarantine-${stamp}`, 'x'), { recursive: true });
+  fs.mkdirSync(path.join(root, '.git', `config.airlock-quarantine-${stamp}`, 'x'), { recursive: true });
   assert.deepEqual(restoreChanged(root, files), [config]);
   assert.equal(fs.readFileSync(config, 'utf8'), '[core]\n');
 });

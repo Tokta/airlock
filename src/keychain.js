@@ -1,5 +1,5 @@
 // Project secrets in the macOS login keychain, for `shell` and `exec` pods (never `claude` or
-// `run`). Each is a generic password with service `claude-pod` and account `<project key>/<NAME>`,
+// `run`). Each is a generic password with service `airlock` and account `<project key>/<NAME>`,
 // where the project key is the name of the project's state dir: one project can never name
 // another's secrets, whatever its config says.
 import path from 'node:path';
@@ -7,16 +7,16 @@ import { spawnSync } from 'node:child_process';
 import { projectStateDir } from './paths.js';
 import { CliError } from './ui.js';
 
-export const SERVICE = 'claude-pod';
+export const SERVICE = 'airlock';
 
 // Secret names are env names. ANTHROPIC_* is allowed (secrets never reach Claude's own pods, so
 // they can't switch it to API billing), but not the names the launcher sets itself: a secret is
 // added last and would override them. Keep in step with podEnvFor and buildRunArgs.
-const RESERVED = /^(HOME|PATH|CLAUDE_POD(_.*)?|CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|GIT_CONFIG_GLOBAL|COREPACK_HOME|npm_config_store_dir|npm_config_cache|pnpm_config_store_dir|pnpm_config_cache_dir)$/;
+const RESERVED = /^(HOME|PATH|AIRLOCK(_.*)?|CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|GIT_CONFIG_GLOBAL|COREPACK_HOME|npm_config_store_dir|npm_config_cache|pnpm_config_store_dir|pnpm_config_cache_dir)$/;
 
 export function secretNameError(name) {
   if (typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) return 'is not a valid variable name';
-  if (RESERVED.test(name)) return 'is set by claude-pod itself';
+  if (RESERVED.test(name)) return 'is set by airlock itself';
   return null;
 }
 
@@ -107,22 +107,22 @@ export function removeSecret(root, name) {
   return true;
 }
 
-// Every claude-pod account in the keychain dump, from attributes only (`dump-keychain` without
+// Every airlock account in the keychain dump, from attributes only (`dump-keychain` without
 // -d never prints values or asks for access). Items are separated by `keychain: "…"` lines.
-export function parseDump(text) {
+export function parseDump(text, service = SERVICE) {
   const accounts = [];
   for (const item of text.split(/^keychain: /m)) {
     const svce = item.match(/^\s*"svce"<blob>="(.*)"$/m)?.[1];
     const acct = item.match(/^\s*"acct"<blob>="(.*)"$/m)?.[1];
-    if (svce === SERVICE && acct) accounts.push(acct);
+    if (svce === service && acct) accounts.push(acct);
   }
   return accounts;
 }
 
-function dump() {
+function dump(service = SERVICE) {
   const res = security(['dump-keychain']);
   if (res.status !== 0) throw failed('list secrets', res);
-  return parseDump(res.stdout);
+  return parseDump(res.stdout, service);
 }
 
 // This project's secret names.
@@ -134,3 +134,39 @@ export function listSecrets(root) {
 
 // Every project's entries, as `<project key>/<NAME>`: finds secrets a moved or renamed project left.
 export const listAllSecrets = () => [...new Set(dump())].sort();
+
+// `airlock migrate`: moves every entry stored under the old service name (claude-pod) to
+// SERVICE, keeping its account. Each is copied, read back, and only then deleted from the old
+// service, so a failure leaves the old entry in place. Returns the accounts moved and those left.
+export function moveService(from) {
+  const moved = [];
+  const left = [];
+  for (const acct of [...new Set(dump(from))].sort()) {
+    const [, name] = acct.split('/');
+    if (!/^[a-z0-9_][a-z0-9_.-]*\/[A-Za-z_][A-Za-z0-9_]*$/.test(acct) || secretNameError(name)) {
+      left.push({ acct, why: 'not a name airlock uses' });
+      continue;
+    }
+    const read = security(['find-generic-password', '-s', from, '-a', acct, '-w']);
+    if (read.status !== 0) {
+      left.push({ acct, why: read.stderr.trim() || `security exited ${read.status}` });
+      continue;
+    }
+    const value = read.stdout.replace(/\n$/, '');
+    const bad = secretValueError(value);
+    if (bad) {
+      left.push({ acct, why: `its value ${bad}` });
+      continue;
+    }
+    const hex = Buffer.from(value, 'utf8').toString('hex');
+    const add = security(['-i'], `add-generic-password -U -s ${SERVICE} -a ${acct} -X ${hex}\n`);
+    const back = security(['find-generic-password', '-s', SERVICE, '-a', acct, '-w']);
+    if (add.status !== 0 || back.status !== 0 || back.stdout.replace(/\n$/, '') !== value) {
+      left.push({ acct, why: 'could not store it under the new name' });
+      continue;
+    }
+    security(['delete-generic-password', '-s', from, '-a', acct]);
+    moved.push(acct);
+  }
+  return { moved, left };
+}

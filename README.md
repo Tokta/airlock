@@ -1,4 +1,4 @@
-# claude-pod
+# Airlock
 
 I was spending hours clicking through Claude approvals, and at some point I stopped reading them and just clicked. That is absolutely not recommended.
 
@@ -6,7 +6,7 @@ Then I found a small repo, forked it and adapted it to my needs. Now every sessi
 
 **Is it 100% safe?** Likely not. **Does it save me headache?** Definitely yes.
 
-![claude-pod](assets/cover.jpeg)
+![airlock](assets/cover.jpeg)
 
 ## What it is
 
@@ -19,29 +19,31 @@ Unofficial: not affiliated with or endorsed by Anthropic.
 Requirements: Docker (Desktop, OrbStack, Colima or Engine), Node.js 20+, and a Claude subscription.
 
 ```sh
-git clone <this repo> && npm install -g ./claude-pod   # links the `claude-pod` command
-claude-pod build                                       # build the Docker image
-claude setup-token && claude-pod auth                  # create a login token, paste it
-claude-pod doctor                                      # check everything
+git clone <this repo> && npm install -g ./airlock   # links the `airlock` command
+airlock build                                       # build the Docker image
+claude setup-token && airlock auth                  # create a login token, paste it
+airlock doctor                                      # check everything
 ```
+
+Coming from claude-pod (the old name)? Run `airlock migrate` once; see [the reference](docs/REFERENCE.md#coming-from-claude-pod).
 
 ## Use
 
 ```sh
 cd your-project                                        # a git repo
-claude-pod claude                                      # interactive Claude in the pod
-claude-pod run --model opus --prompt-file /tmp/task.md --out /tmp/task   # headless agent run
+airlock claude                                      # interactive Claude in the pod
+airlock run --model opus --prompt-file /tmp/task.md --out /tmp/task   # headless agent run
 ```
 
-`claude-pod run` is what an orchestrator calls to hand a task to a sandboxed agent: the prompt goes in on stdin, and the result lands in `/tmp/task.out`, `.err` and `.exit`. Run `claude-pod guide` for a briefing you can give an agent, or `claude-pod --help` for every command.
+`airlock run` is what an orchestrator calls to hand a task to a sandboxed agent: the prompt goes in on stdin, and the result lands in `/tmp/task.out`, `.err` and `.exit`. Run `airlock guide` for a briefing you can give an agent, or `airlock --help` for every command.
 
 To wire it into an orchestrator (permissions, Docker network, ports, env), see **[INTEGRATION.md](INTEGRATION.md)**. To run your own dev loop (`pnpm install`, `pnpm dev`, tests) in pods too, see [Run the whole dev loop in a pod](INTEGRATION.md#5-run-the-whole-dev-loop-in-a-pod).
 
 ## What it does and doesn't protect
 
 - **Protected:** everything outside the project folder, and the host-side files a pod could use to run code on your machine later (`.git/hooks`, `.git/config`, `.claude/`, `.mcp.json`, ...) are read-only or quarantined. On macOS those files are also made immutable while a pod runs, so host edits to them (`git push -u`, `git config`) fail until it exits.
-- **Opt-in for the dev loop:** with `claude-pod shims` on your `PATH`, `pnpm`, `npm`, `node` & co. typed on the host run in a pod in projects whose config has `shims`, except the scripts you list for the host and `node` files no pod can write. A command run by its full path, or a global CLI, still runs on the host.
-- **Not protected:** the project itself is read-write, apart from paths you list under `readOnly` in the config, so review the diff before running its scripts on your host. Network access is open by default, so a hostile pod could send the project, and its login token, anywhere. API keys kept with `claude-pod secret` reach only `shell` and `exec` pods, not Claude's own pods, but an agent can still change the code an `exec` pod later runs with them. `"network": "none"` cuts that, but also takes Claude offline.
+- **Opt-in for the dev loop:** with `airlock shims` on your `PATH`, `pnpm`, `npm`, `node` & co. typed on the host run in a pod in projects whose config has `shims`, except the scripts you list for the host and `node` files no pod can write. A command run by its full path, or a global CLI, still runs on the host.
+- **Not protected:** the project itself is read-write, apart from paths you list under `readOnly` in the config, so review the diff before running its scripts on your host. Network access is open by default, so a hostile pod could send the project, and its login token, anywhere. API keys kept with `airlock secret` reach only `shell` and `exec` pods, not Claude's own pods, but an agent can still change the code an `exec` pod later runs with them. `"network": "none"` cuts that, but also takes Claude offline.
 
 Details: [docs/REFERENCE.md](docs/REFERENCE.md#security-model).
 
@@ -52,4 +54,4 @@ Details: [docs/REFERENCE.md](docs/REFERENCE.md#security-model).
 
 ## License
 
-MIT, see [`LICENSE`](LICENSE). Claude Code is a separate product owned by Anthropic, PBC, and is not redistributed here: `claude-pod build` fetches it from npm at build time. "Claude" and "Claude Code" are trademarks of Anthropic, PBC, used nominatively.
+MIT, see [`LICENSE`](LICENSE). Claude Code is a separate product owned by Anthropic, PBC, and is not redistributed here: `airlock build` fetches it from npm at build time. "Claude" and "Claude Code" are trademarks of Anthropic, PBC, used nominatively.

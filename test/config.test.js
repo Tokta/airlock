@@ -17,10 +17,10 @@ test('project root: config file beats git root, git root beats cwd', () => {
   fs.mkdirSync(path.join(dir, 'repo/app/src'), { recursive: true });
   assert.equal(findProjectRoot(path.join(dir, 'repo/app/src')).root, path.join(dir, 'repo'));
 
-  fs.writeFileSync(path.join(dir, 'repo/app/claude-pod.config.json'), '{}');
+  fs.writeFileSync(path.join(dir, 'repo/app/airlock.config.json'), '{}');
   const found = findProjectRoot(path.join(dir, 'repo/app/src'));
   assert.equal(found.root, path.join(dir, 'repo/app'));
-  assert.equal(found.configPath, path.join(dir, 'repo/app/claude-pod.config.json'));
+  assert.equal(found.configPath, path.join(dir, 'repo/app/airlock.config.json'));
 });
 
 test('refuses to mount home, /, ancestors of home, home-like and non-project folders', () => {
@@ -52,7 +52,7 @@ test('interpolate: envFile vars only, $$ escape, no newlines', () => {
 test('loadConfig resolves env from envFile and validates', () => {
   const dir = tmp();
   fs.mkdirSync(path.join(dir, '.git'));
-  const configPath = path.join(dir, 'claude-pod.config.json');
+  const configPath = path.join(dir, 'airlock.config.json');
   fs.writeFileSync(path.join(dir, '.env'), 'PW=secret\n');
   fs.writeFileSync(configPath, JSON.stringify({
     $comment: 'x', network: 'app_default', ports: [3000, 3131], envFile: '.env',
@@ -112,8 +112,8 @@ test('loadConfig resolves env from envFile and validates', () => {
   bad({ shims: { host: ['a b'] } }, /is not a script name/);
   bad({ secrets: 'A' }, /"secrets" must be an array/);
   bad({ secrets: ['A-B'] }, /not a valid variable name/);
-  bad({ secrets: ['CLAUDE_CODE_OAUTH_TOKEN'] }, /set by claude-pod itself/);
-  bad({ secrets: ['GIT_CONFIG_GLOBAL'] }, /set by claude-pod itself/);
+  bad({ secrets: ['CLAUDE_CODE_OAUTH_TOKEN'] }, /set by airlock itself/);
+  bad({ secrets: ['GIT_CONFIG_GLOBAL'] }, /set by airlock itself/);
   bad({ secrets: ['A', 'A'] }, /duplicates/);
   bad({ secrets: ['A'], env: { A: 'x' } }, /both "env" and "secrets"/);
   bad({ readOnly: 'scripts' }, /"readOnly" must be an array/);

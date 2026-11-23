@@ -6,26 +6,26 @@ import { fileURLToPath } from 'node:url';
 // Root of this package (where the Dockerfile lives), resolved through the npm global symlink.
 export const PKG_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export const IMAGE = 'claude-pod';
-export const CONFIG_FILE = 'claude-pod.config.json';
+export const IMAGE = 'airlock';
+export const CONFIG_FILE = 'airlock.config.json';
 
 // Container label keys, used by `ps`/`stop` to find pods and by the image staleness check.
-export const LABEL = 'claude-pod';
-export const LABEL_PROJECT = 'claude-pod.project';
-export const LABEL_MODE = 'claude-pod.mode';
-export const LABEL_DOCKERFILE = 'claude-pod.dockerfile-sha256';
+export const LABEL = 'airlock';
+export const LABEL_PROJECT = 'airlock.project';
+export const LABEL_MODE = 'airlock.mode';
+export const LABEL_DOCKERFILE = 'airlock.dockerfile-sha256';
 
 // Two state locations, split by who can write them:
 //
-//   ~/.config/claude-pod/   HOST-ONLY. Never mounted into any pod. Holds everything the launcher
+//   ~/.config/airlock/   HOST-ONLY. Never mounted into any pod. Holds everything the launcher
 //                           trusts: the login token, approved-config records, the built image ID,
 //                           host settings, and short-lived private files (env-files, prompts).
-//   ~/.claude-pod/pods/<p>/ POD-WRITABLE. One Claude config dir per project, mounted into that
+//   ~/.airlock/pods/<p>/ POD-WRITABLE. One Claude config dir per project, mounted into that
 //                           project's pods only. The launcher never trusts anything read from it.
 //
 // Both derive from os.homedir() only — no env-var overrides that a caller could use to redirect
 // the launcher (tests set HOME).
-export const hostDir = () => path.join(os.homedir(), '.config', 'claude-pod');
+export const hostDir = () => path.join(os.homedir(), '.config', 'airlock');
 export const tokenPath = () => path.join(hostDir(), 'oauth-token');
 export const trustDir = () => path.join(hostDir(), 'trust');
 export const imageIdPath = () => path.join(hostDir(), 'image-id');
@@ -33,7 +33,7 @@ export const hostSettingsPath = () => path.join(hostDir(), 'settings.json');
 export const runDir = () => path.join(hostDir(), 'run');
 export const pendingDir = () => path.join(hostDir(), 'pending');
 
-export const stateRoot = () => path.join(os.homedir(), '.claude-pod');
+export const stateRoot = () => path.join(os.homedir(), '.airlock');
 export const podsDir = () => path.join(stateRoot(), 'pods');
 
 export const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
@@ -46,7 +46,7 @@ export function projectStateDir(root) {
 
 // Where the per-project state dir is mounted inside the pod; also CLAUDE_CONFIG_DIR, so Claude
 // keeps .claude.json there too and no single-file mount is needed.
-export const POD_CONFIG_DIR = '/home/claude-pod/.claude';
+export const POD_CONFIG_DIR = '/home/airlock/.claude';
 
 // Package-manager caches that outlive a pod, in the project's state dir (see cacheEnv in
 // launch.js). Not `cache/`, which Claude Code itself uses inside its config dir.

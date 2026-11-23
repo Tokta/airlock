@@ -7,17 +7,17 @@ import { canPrompt, readSecret } from '../prompt.js';
 import { kind } from '../safefs.js';
 import { CliError, bold, detail, ok, warn } from '../ui.js';
 
-export const AUTH_HELP = `Usage: claude-pod auth [--from-env] [--remove]
+export const AUTH_HELP = `Usage: airlock auth [--from-env] [--remove]
 
 Stores the login the pods use: a long-lived token for your Claude subscription (Pro/Max usage,
 not API billing). Create one on the host (opens the browser) with:
 
   claude setup-token
 
-then run \`claude-pod auth\` and paste it (or pipe it in: \`claude-pod auth < file\`).
-The token file is kept in ~/.config/claude-pod/oauth-token (0600), a folder no pod can see. The
-token value is handed as CLAUDE_CODE_OAUTH_TOKEN to the pods that run Claude (\`claude-pod
-claude\` and \`claude-pod run\`), so code inside those pods CAN read it. \`shell\` and \`exec\`
+then run \`airlock auth\` and paste it (or pipe it in: \`airlock auth < file\`).
+The token file is kept in ~/.config/airlock/oauth-token (0600), a folder no pod can see. The
+token value is handed as CLAUDE_CODE_OAUTH_TOKEN to the pods that run Claude (\`airlock
+claude\` and \`airlock run\`), so code inside those pods CAN read it. \`shell\` and \`exec\`
 pods get no token.
 It never rotates, so parallel pods can't log each other out.
 

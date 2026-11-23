@@ -57,8 +57,8 @@ export async function portIsFree(port) {
 // real dev origin, where it would receive OAuth redirects and could plant a service worker that
 // outlives the pod. Other ports get distinct free host ports. We pick host ports ourselves (rather
 // than letting Docker choose with `-p 127.0.0.1::PORT`) so they are known before the container
-// starts and can be injected as CLAUDE_POD_PORT_<container> env vars.
-export async function allocatePorts(entries, { isFree = portIsFree, ownFixed = true, busyHint = 'claude-pod exec --no-ports' } = {}) {
+// starts and can be injected as AIRLOCK_PORT_<container> env vars.
+export async function allocatePorts(entries, { isFree = portIsFree, ownFixed = true, busyHint = 'airlock exec --no-ports' } = {}) {
   const fixed = (e) => ownFixed && e.fixed;
   // A random port must never land on a fixed port's number, even in an agent pod: an ephemeral
   // port like 51256 can be both.
@@ -67,7 +67,7 @@ export async function allocatePorts(entries, { isFree = portIsFree, ownFixed = t
     if (!fixed(e)) continue;
     if (!(await isFree(e.port))) {
       throw new CliError(`port ${e.port} is in use — is the dev server already running?`, {
-        hint: `Stop it first (\`claude-pod ps\` lists pods), or use ${busyHint}, which publishes no ports.`,
+        hint: `Stop it first (\`airlock ps\` lists pods), or use ${busyHint}, which publishes no ports.`,
       });
     }
   }

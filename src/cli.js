@@ -5,6 +5,7 @@ import { build } from './commands/build.js';
 import { doctor } from './commands/doctor.js';
 import { guide } from './commands/guide.js';
 import { init } from './commands/init.js';
+import { migrate } from './commands/migrate.js';
 import { ps, stop } from './commands/pods.js';
 import { run } from './commands/run.js';
 import { secret } from './commands/secret.js';
@@ -15,11 +16,11 @@ import { launch } from './launch.js';
 import { PKG_DIR } from './paths.js';
 import { CliError, err } from './ui.js';
 
-const HELP = `claude-pod — run Claude Code in a Docker sandbox scoped to one project folder.
+const HELP = `airlock — run Claude Code in a Docker sandbox scoped to one project folder.
 
-Usage: claude-pod [command] [args]
+Usage: airlock [command] [args]
 
-AI agents: start with \`claude-pod guide\` — how to delegate a task, read results, handle errors.
+AI agents: start with \`airlock guide\` — how to delegate a task, read results, handle errors.
 
 Pod commands (mount the current project and start a container):
   (none) | shell          bash shell in the pod (--no-ports: publish none)
@@ -27,12 +28,12 @@ Pod commands (mount the current project and start a container):
   exec <cmd> [args...]    any command in the pod, e.g. exec pnpm test
   exec --no-ports <cmd>   the same, publishing no ports (tests beside a running dev server)
   run --prompt-file F …   headless Claude task with --dangerously-skip-permissions
-                          (see: claude-pod run --help)
+                          (see: airlock run --help)
 
 Setup & management:
   build                   build the image (once, and to update Claude Code)
   auth                    store the login token from \`claude setup-token\`
-  init                    create claude-pod.config.json for this project
+  init                    create airlock.config.json for this project
   trust                   review and approve this project's (changed) config
   secret set|list|rm      this project's keychain secrets for shell/exec pods (macOS)
   shims                   write host launchers so pnpm/npm/node/… go to a pod in opted-in projects
@@ -41,10 +42,11 @@ Setup & management:
   guide                   briefing for AI agents + status of this project (read-only)
   doctor                  check Docker, image, login and project config
   uninstall [--yes]       remove the image and pod state
+  migrate                 move a setup made under the old name, claude-pod (once)
   --version | --help
 
-The project root is the nearest folder (upwards) with claude-pod.config.json, else the git root.
-Pods get CLAUDE_POD=1 and, per published port, CLAUDE_POD_PORT_<n>.
+The project root is the nearest folder (upwards) with airlock.config.json, else the git root.
+Pods get AIRLOCK=1 and, per published port, AIRLOCK_PORT_<n>.
 
 Env overrides: NET=none (no network); PIDS, MEMORY, CPUS (resource caps).`;
 
@@ -54,7 +56,7 @@ const version = () => JSON.parse(fs.readFileSync(path.join(PKG_DIR, 'package.jso
 // hitting a dev server); `run` doesn't by default (see run.js). Fixed ports are published as
 // themselves only by the dev-server paths, `shell` and `exec`; agent pods get random ones (see
 // allocatePorts).
-const EXEC_USAGE = 'Usage: claude-pod exec [--no-ports] [--] <command> [args...]';
+const EXEC_USAGE = 'Usage: airlock exec [--no-ports] [--] <command> [args...]';
 
 // `exec [--no-ports] [--] <cmd> [args...]`. Only flags before the command are ours; everything
 // from the command on is passed through untouched (`exec pnpm test --no-ports` is pnpm's flag).
@@ -78,7 +80,7 @@ function execCommand(args) {
 // `shell [--no-ports]`: a shell beside a running dev server needs no ports of its own.
 function shellCommand(args) {
   if (args.length > 1 || (args.length && args[0] !== '--no-ports')) {
-    throw new CliError('shell takes no arguments except --no-ports; use claude-pod exec <cmd>.');
+    throw new CliError('shell takes no arguments except --no-ports; use airlock exec <cmd>.');
   }
   return launch({ mode: 'shell', command: ['bash'], usesClaude: false, publishPorts: !args.length, ownFixedPorts: true });
 }
@@ -99,6 +101,7 @@ const COMMANDS = {
   doctor,
   guide,
   uninstall,
+  migrate,
 };
 
 export async function main(argv) {
@@ -113,7 +116,7 @@ export async function main(argv) {
       return 0;
     }
     const handler = Object.hasOwn(COMMANDS, cmd) ? COMMANDS[cmd] : null;
-    if (!handler) throw new CliError(`Unknown command "${cmd}".`, { hint: 'Run claude-pod --help. To run a program in the pod: claude-pod exec <cmd>.' });
+    if (!handler) throw new CliError(`Unknown command "${cmd}".`, { hint: 'Run airlock --help. To run a program in the pod: airlock exec <cmd>.' });
     return await handler(rest);
   } catch (e) {
     if (e instanceof CliError) {

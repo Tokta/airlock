@@ -6,12 +6,12 @@ import { docker } from '../docker.js';
 import { IMAGE, hostDir, stateRoot } from '../paths.js';
 import { CliError, bold, detail, info, ok } from '../ui.js';
 
-export const UNINSTALL_HELP = `Usage: claude-pod uninstall [--yes]
+export const UNINSTALL_HELP = `Usage: airlock uninstall [--yes]
 
-Removes the '${IMAGE}' image, the pods' state (~/.claude-pod: session history, package caches) and the host-only
-state (~/.config/claude-pod: login token, trusted configs).
-Does not remove the claude-pod command itself (\`npm uninstall -g claude-pod\`), or keychain
-secrets stored with \`claude-pod secret set\` (remove those with \`claude-pod secret rm\`).`;
+Removes the '${IMAGE}' image, the pods' state (~/.airlock: session history, package caches) and the host-only
+state (~/.config/airlock: login token, trusted configs).
+Does not remove the airlock command itself (\`npm uninstall -g airlock\`), or keychain
+secrets stored with \`airlock secret set\` (remove those with \`airlock secret rm\`).`;
 
 // Pods can leave folders without write permission in their state (a package cache, say), which
 // rmSync can't empty. Make every real folder owner-writable (never following a symlink), then
@@ -72,7 +72,7 @@ export async function uninstall(argv) {
       ok(`${dir} was not present`);
     }
   }
-  process.stderr.write(`  To remove the command too: ${bold('npm uninstall -g claude-pod')}\n`);
-  process.stderr.write('  If you put ~/.config/claude-pod/shims on PATH in your shell rc, remove that line.\n');
+  process.stderr.write(`  To remove the command too: ${bold('npm uninstall -g airlock')}\n`);
+  process.stderr.write('  If you put ~/.config/airlock/shims on PATH in your shell rc, remove that line.\n');
   return 0;
 }

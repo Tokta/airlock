@@ -5,7 +5,7 @@
 
 ## Why
 
-claude-pod treats the pod as hostile because the agent inside may be prompt-injected. A
+Airlock treats the pod as hostile because the agent inside may be prompt-injected. A
 malicious npm package is the same threat: code that runs with the project's permissions and
 should see nothing else. Today the pod contains agents, but the dev loop still runs on the host:
 `pnpm install`, `pnpm dev`, tests and builds. A bad package installed that way can read
@@ -13,7 +13,7 @@ should see nothing else. Today the pod contains agents, but the dev loop still r
 
 The goal: in a project that opts in, every package command runs in a pod, whether a person
 typed it or the host Claude session did, with the same protections the agent pods already have.
-`claude-pod exec pnpm dev` already works. What is missing is below, in order.
+`airlock exec pnpm dev` already works. What is missing is below, in order.
 
 The guard is there to stop accidents and narrow what a package can reach. Someone who calls
 `/usr/local/bin/node` by its full path on the host gets past it; that is accepted.
@@ -29,9 +29,9 @@ it and, with the network open, send it out.
 - Pass the token only when `usesClaude` is true, which means `claude` and `run`. `shell` and
   `exec` get no token.
 - `shell` users who start `claude` by hand get the existing "not logged in" path. Its message
-  points at `claude-pod claude`.
+  points at `airlock claude`.
 - `docs/REFERENCE.md` "Login", `AUTH_HELP` in [src/commands/auth.js](../src/commands/auth.js) and
-  `claude-pod guide`: say which commands carry the token.
+  `airlock guide`: say which commands carry the token.
 - Test: `buildRunArgs` is pure, but the token is written by `launch()`. Assert on the env-file
   content for an `exec` launch against the fake docker in [test/helpers.js](../test/helpers.js).
 
@@ -104,7 +104,7 @@ port, because OAuth callbacks, auth base URLs and cookies are set to it.
   falls back to a random port.
 - `exec --no-ports`: no ports published at all. The shims (batch 6) always use it, so
   `pnpm test` beside a running `pnpm dev` never fights over 3000.
-- `CLAUDE_POD_PORT_<n>` stays as it is (equal to `n` for a fixed port).
+- `AIRLOCK_PORT_<n>` stays as it is (equal to `n` for a fixed port).
 - **Chosen (with the user, after review):** only the dev-server paths, `exec` and `shell`, publish
   a fixed port as itself and refuse when it is busy. `claude` and `run --ports` publish it on a
   random port, so a hostile agent's own server never takes the real origin (OAuth redirects,
@@ -120,12 +120,12 @@ port, because OAuth callbacks, auth base URLs and cookies are set to it.
 cache. When a project pins a different pnpm in `packageManager` than the image's 12.6.0, corepack
 downloads it on every launch, and every `pnpm install` downloads everything again.
 
-- Per project, `~/.claude-pod/pods/<project>/cache/` (inside the state dir already mounted at
+- Per project, `~/.airlock/pods/<project>/cache/` (inside the state dir already mounted at
   `~/.claude`). Set `COREPACK_HOME`, `npm_config_store_dir` (pnpm) and `npm_config_cache` (npm)
   to folders under it.
 - It is pod-writable, so a pod can poison it, but only for later pods of the same project, which
   already share the working tree. Nothing on the host reads it.
-- `docs/REFERENCE.md` "Side effects outside the project folder": mention it, and that `claude-pod uninstall` removes it.
+- `docs/REFERENCE.md` "Side effects outside the project folder": mention it, and that `airlock uninstall` removes it.
 - **As built (after review):** the folder is `pkg-cache/` (Claude Code owns `cache/`). pnpm 11+
   reads `pnpm_config_store_dir` and needs `pnpm_config_cache_dir` to install offline;
   `npm_config_store_dir` is set only for a root `packageManager` pin of pnpm 10 or older, because
@@ -144,15 +144,15 @@ and every host process can read. Let the launcher fetch them at start-up instead
 { "secrets": ["ANTHROPIC_API_KEY", "RESEND_API_KEY"] }
 ```
 
-- `claude-pod secret set NAME`: hidden input, reusing `readSecret` from
+- `airlock secret set NAME`: hidden input, reusing `readSecret` from
   [src/prompt.js](../src/prompt.js), or piped on stdin. It stores a generic password with
-  service `claude-pod` and account `<project key>/<NAME>`. The project key is the same one
+  service `airlock` and account `<project key>/<NAME>`. The project key is the same one
   `projectStateDir()` uses, so one project can never read another's secrets, whatever its config
   says. Also `secret list` (names only, never values) and `secret rm NAME`.
-- `security add-generic-password -U -s claude-pod -a <account> -w` reads the value from its own
+- `security add-generic-password -U -s airlock -a <account> -w` reads the value from its own
   prompt, never from argv. Check whether that prompt can be fed from our hidden input without
   the value appearing in `ps`. If it cannot, write the value through `security -i` on stdin.
-- Launch: for each name in `secrets`, `security find-generic-password -s claude-pod -a <account> -w`.
+- Launch: for each name in `secrets`, `security find-generic-password -s airlock -a <account> -w`.
   The value goes into the private env file, like the token, never argv. A name with no entry is
   skipped with a warning, so the app falls back to whatever it does without the key.
 - **Secrets reach `shell` and `exec` pods only, never `claude` or `run`.** A prompt-injected
@@ -179,8 +179,8 @@ tests in [test/shims.test.js](../test/shims.test.js). It differs from the plan b
 Docker and the user's decisions:
 - `node <file>` is routed by where the file is. It goes to the pod when the file is pod-writable in an opted-in project:
   every symlink on the way is checked, and `readOnly` counts only if every running pod has it too. Global CLIs,
-  claude-pod and locked scripts run on the host, with the real path that was checked.
-- claude-pod runs `shims.host` scripts itself, from a `readOnly` root `package.json`, with `/bin/sh` and no host pnpm
+  airlock and locked scripts run on the host, with the real path that was checked.
+- Airlock runs `shims.host` scripts itself, from a `readOnly` root `package.json`, with `/bin/sh` and no host pnpm
   or npm. `npm start/stop/test` count as scripts too.
 - Shim pods get no keychain secrets and print no banner. They launch in-process.
 - The opt-in is sticky in the trust record. `init` won't end it, `--forget` needs a terminal and the config to be gone,
@@ -188,29 +188,29 @@ Docker and the user's decisions:
 - The launchers use the absolute node that wrote them and skip relative PATH entries and the shims folder under any
   spelling. They give host children the shims back, and keep IPC fds.
 - A `readOnly` path that a pod already running at approval time could still write (one started under an older config)
-  is fingerprinted at approval. If it changed by the time that pod is gone, the shims refuse it until `claude-pod trust`
+  is fingerprinted at approval. If it changed by the time that pod is gone, the shims refuse it until `airlock trust`
   approves the new content. The fingerprint is kept, under any spelling, until it is checked or approved. `trust` names
   newly-`readOnly` paths, since approving them approves their current content.
 - Speed: outside opted-in projects, the launchers exec the real tool without starting node (-ef against an index of
   opted-in roots that `trust` keeps). `node` costs about 0.08 s per call, because it is routed by its file. Host
   children keep the shims only in an opted-in project.
 
-So that nobody has to remember `claude-pod exec`, in a person's terminal or in the host Claude
+So that nobody has to remember `airlock exec`, in a person's terminal or in the host Claude
 session (which uses the same `PATH`):
 
-- `claude-pod shims` writes small launchers for `pnpm`, `npm`, `npx`, `node`, `tsx`, `yarn`,
-  `bunx` and `bun` into `~/.config/claude-pod/shims/`. It then prints the one line to put first
-  on `PATH`. claude-pod still never edits shell rc files itself.
+- `airlock shims` writes small launchers for `pnpm`, `npm`, `npx`, `node`, `tsx`, `yarn`,
+  `bunx` and `bun` into `~/.config/airlock/shims/`. It then prints the one line to put first
+  on `PATH`. Airlock still never edits shell rc files itself.
 - Each shim:
-  1. walks up from the cwd for a `claude-pod.config.json` (config only, not the git root, so
+  1. walks up from the cwd for a `airlock.config.json` (config only, not the git root, so
      only opted-in projects are affected);
   2. **with no config, or a config without `shims`**, finds the real binary (the next one on
      `PATH` after the shims folder) and execs it;
   3. **with a config that has `shims`**, requires the config to be trusted; untrusted, it
-     refuses with the `claude-pod trust` hint rather than running on the host;
+     refuses with the `airlock trust` hint rather than running on the host;
   4. **with a trusted config:** `pnpm <script>` / `pnpm run <script>` / `npm run <script>`
      where `<script>` is in `shims.host` runs the real binary on the host; everything else
-     becomes `claude-pod exec --no-ports <cmd> <args…>`, with stdio and the exit code passed
+     becomes `airlock exec --no-ports <cmd> <args…>`, with stdio and the exit code passed
      through.
 
   The config key:
@@ -220,7 +220,7 @@ session (which uses the same `PATH`):
   ```
 
 - `shims.host` is for scripts that need the host's Docker, SSH or keychain. They should run no
-  package code themselves; one that needs to (a dev script, say) calls `claude-pod exec` for that
+  package code themselves; one that needs to (a dev script, say) calls `airlock exec` for that
   part. A host script's files should be under `readOnly` (batch 2). `doctor` warns when one is
   not.
 - Cost: each shimmed command starts a fresh container, about a second. Measure it. If it hurts,
@@ -241,9 +241,9 @@ isn't under `readOnly`.
 INTEGRATION.md gets a section "Run the whole dev loop in a pod". It covers:
 
 - a config using `readOnly`, fixed `ports`, `secrets` and `shims`;
-- moving keys out of `.env` with `claude-pod secret set`;
+- moving keys out of `.env` with `airlock secret set`;
 - the shims `PATH` line;
-- a dev script that brings up compose on the host and then runs `claude-pod exec` for the app.
+- a dev script that brings up compose on the host and then runs `airlock exec` for the app.
 
 The security model in `docs/REFERENCE.md` (and the README's short "What it does and doesn't protect") gains rows for the new protections and loses "Everything else in the
 project" from "still exposed" for the paths a project now locks.

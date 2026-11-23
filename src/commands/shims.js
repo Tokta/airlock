@@ -10,38 +10,38 @@ import { SHIM_TOOLS, shimsDir, sq } from '../shim.js';
 import { ensurePrivateDir, kind, writeFileAtomic } from '../safefs.js';
 import { CliError, bold, info, ok, warn } from '../ui.js';
 
-export const SHIMS_HELP = `Usage: claude-pod shims [--forget]
+export const SHIMS_HELP = `Usage: airlock shims [--forget]
 
-Writes launchers for ${SHIM_TOOLS.join(', ')} into ~/.config/claude-pod/shims/ and prints
-the line that puts them first on PATH. claude-pod never edits your shell rc files. Run it again
-after moving claude-pod or the node it runs on.
+Writes launchers for ${SHIM_TOOLS.join(', ')} into ~/.config/airlock/shims/ and prints
+the line that puts them first on PATH. airlock never edits your shell rc files. Run it again
+after moving airlock or the node it runs on.
 
-In a project whose trusted claude-pod.config.json has "shims", each of those commands runs as
-\`claude-pod exec --no-ports <cmd>\`, with none of the project's keychain secrets. Except:
+In a project whose trusted airlock.config.json has "shims", each of those commands runs as
+\`airlock exec --no-ports <cmd>\`, with none of the project's keychain secrets. Except:
   - the package scripts listed in "shims.host" (\`pnpm <script>\`, \`pnpm run <script>\`,
-    \`npm run <script>\`, \`npm start\`/\`test\`, optionally followed by \`-- <args>\`): claude-pod
+    \`npm run <script>\`, \`npm start\`/\`test\`, optionally followed by \`-- <args>\`): airlock
     runs them on the host itself, with /bin/sh in the project root, reading them from
     package.json, which must be under "readOnly";
-  - \`node <file>\` where <file> is outside the project (a global CLI, claude-pod itself) or
-    under "readOnly" or a path claude-pod always locks: it runs on the host.
+  - \`node <file>\` where <file> is outside the project (a global CLI, airlock itself) or
+    under "readOnly" or a path airlock always locks: it runs on the host.
 With no config, or a config without "shims", the real command runs as before. An untrusted
 config that has "shims" is refused rather than run on the host. So is a project whose approved
 config had "shims" and no longer does, or is gone: a pod could have removed it.
 
   --forget   you deleted this project's config on purpose: run commands on the host again
-             (asks first; to drop just the "shims" key, edit the config and run claude-pod trust)`;
+             (asks first; to drop just the "shims" key, edit the config and run airlock trust)`;
 
-const SHIM_JS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'claude-pod-shim.js');
+const SHIM_JS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'airlock-shim.js');
 
 // A POSIX sh launcher. It drops from PATH the shims folder, under any spelling (so the real
 // binaries are found, and a shim never starts itself again), and any relative entry
-// (`node_modules/.bin`, which a pod can fill). Then it starts claude-pod's shim with the absolute
-// node `claude-pod shims` ran on, handing it the PATH it was started with, for whatever runs on the
-// host. If claude-pod is gone, it says so and runs the real command, so uninstalling it doesn't
+// (`node_modules/.bin`, which a pod can fill). Then it starts airlock's shim with the absolute
+// node `airlock shims` ran on, handing it the PATH it was started with, for whatever runs on the
+// host. If airlock is gone, it says so and runs the real command, so uninstalling it doesn't
 // break node.
 //
 // Fast path: for every tool but `node` (which is routed by its file), a command with no
-// claude-pod.config.json above the current folder and no opted-in project there (the index
+// airlock.config.json above the current folder and no opted-in project there (the index
 // `trust` keeps, compared with -ef so a different case or a symlink still matches) is not one the
 // shims change: it runs the real command straight away, without starting node.
 export function shimScript(tool, { dir = shimsDir(), shimJs = SHIM_JS, node = process.execPath, index = shimsIndexPath() } = {}) {
@@ -50,7 +50,7 @@ idx=${sq(index)}
 if [ -f "$idx" ] && [ -r "$idx" ] && here=$(pwd -P 2>/dev/null) && [ -n "$here" ]; then
   d=$here
   while :; do
-    [ -e "$d/claude-pod.config.json" ] && break
+    [ -e "$d/airlock.config.json" ] && break
     hit=
     while IFS= read -r r; do
       if [ -n "$r" ] && [ "$d" -ef "$r" ]; then hit=1; break; fi
@@ -63,13 +63,13 @@ if [ -f "$idx" ] && [ -r "$idx" ] && here=$(pwd -P 2>/dev/null) && [ -n "$here" 
 fi
 `;
   return `#!/bin/sh
-# Written by \`claude-pod shims\`. Runs ${tool} in a pod in projects that opted in.
+# Written by \`airlock shims\`. Runs ${tool} in a pod in projects that opted in.
 shims=${sq(dir)}
-if [ -n "$CLAUDE_POD_IN_SHIM" ]; then
-  echo "claude-pod shim: ${tool} found the shims again on PATH; is $shims on it twice, spelled differently?" >&2
+if [ -n "$AIRLOCK_IN_SHIM" ]; then
+  echo "airlock shim: ${tool} found the shims again on PATH; is $shims on it twice, spelled differently?" >&2
   exit 127
 fi
-CLAUDE_POD_SHIM_PATH=$PATH
+AIRLOCK_SHIM_PATH=$PATH
 set -f
 p=
 IFS=:
@@ -84,19 +84,19 @@ PATH=$p
 export PATH
 ${fast}# A parent's IPC channel to \`node\` (spawn with 'ipc'): kept for the real node, not taken by the shim's.
 if [ -n "$NODE_CHANNEL_FD" ]; then
-  CLAUDE_POD_CHANNEL_FD=$NODE_CHANNEL_FD
-  export CLAUDE_POD_CHANNEL_FD
+  AIRLOCK_CHANNEL_FD=$NODE_CHANNEL_FD
+  export AIRLOCK_CHANNEL_FD
   unset NODE_CHANNEL_FD
 fi
 js=${sq(shimJs)}
 if [ ! -f "$js" ]; then
-  echo "claude-pod shim: $js is gone, so ${tool} runs on the host. Remove $shims from PATH in your shell rc, or run claude-pod shims again." >&2
+  echo "airlock shim: $js is gone, so ${tool} runs on the host. Remove $shims from PATH in your shell rc, or run airlock shims again." >&2
   exec ${tool} "$@"
 fi
 node=${sq(node)}
 [ -x "$node" ] || node=node
-CLAUDE_POD_IN_SHIM=1
-export CLAUDE_POD_IN_SHIM CLAUDE_POD_SHIM_PATH
+AIRLOCK_IN_SHIM=1
+export AIRLOCK_IN_SHIM AIRLOCK_SHIM_PATH
 exec "$node" "$js" ${tool} "$@"
 `;
 }
@@ -111,10 +111,10 @@ async function forget() {
   const config = path.join(d, CONFIG_FILE);
   if (kind(config) !== 'missing') {
     throw new CliError(`${config} is still there, so there's nothing to forget.`, {
-      hint: `To turn the shims off, remove "shims" from it and approve it with ${bold('claude-pod trust')}.`,
+      hint: `To turn the shims off, remove "shims" from it and approve it with ${bold('airlock trust')}.`,
     });
   }
-  if (!canPrompt()) throw new CliError('claude-pod shims --forget needs a terminal.');
+  if (!canPrompt()) throw new CliError('airlock shims --forget needs a terminal.');
   warn(`${config} is gone. It had "shims", and a pod could have deleted it.`);
   if (!(await confirm(`Run pnpm, npm, node & co. on the host again in ${d}?`))) throw new CliError('Not changed.');
   forgetShims(d);
@@ -129,15 +129,25 @@ export async function shims(argv) {
     return 0;
   }
   if (values.forget) return forget();
+  const dir = writeShims();
+  ok(`Wrote ${SHIM_TOOLS.length} shims to ${bold(dir)} (they run airlock on ${process.execPath})`);
+  info('Put them first on PATH (in ~/.zshrc or ~/.bashrc, then open a new terminal):');
+  process.stdout.write(`${pathLine(dir)}\n`);
+  return 0;
+}
+
+// Writes the launchers into `dir` (the shims folder unless `airlock migrate` bridges an old one)
+// and returns it.
+export function writeShims(dir = shimsDir()) {
   ensurePrivateDir(hostDir());
-  const dir = shimsDir();
   ensurePrivateDir(dir);
   writeShimsIndex(); // approvals made before the shims existed
-  for (const tool of SHIM_TOOLS) writeFileAtomic(path.join(dir, tool), shimScript(tool), 0o700);
-  ok(`Wrote ${SHIM_TOOLS.length} shims to ${bold(dir)} (they run claude-pod on ${process.execPath})`);
-  info('Put them first on PATH (in ~/.zshrc or ~/.bashrc, then open a new terminal):');
+  for (const tool of SHIM_TOOLS) writeFileAtomic(path.join(dir, tool), shimScript(tool, { dir }), 0o700);
+  return dir;
+}
+
+export function pathLine(dir = shimsDir()) {
   const home = os.homedir();
   const shown = dir.startsWith(`${home}/`) ? `$HOME/${path.relative(home, dir)}` : dir;
-  process.stdout.write(`export PATH="${shown}:$PATH"\n`);
-  return 0;
+  return `export PATH="${shown}:$PATH"`;
 }

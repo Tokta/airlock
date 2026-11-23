@@ -6,7 +6,7 @@ import { IMAGE, LABEL_DOCKERFILE, PKG_DIR, hostDir, imageIdPath } from '../paths
 import { ensurePrivateDir, writeFileAtomic } from '../safefs.js';
 import { CliError, bold, detail, info, ok } from '../ui.js';
 
-export const BUILD_HELP = `Usage: claude-pod build [--claude-version X.Y.Z]
+export const BUILD_HELP = `Usage: airlock build [--claude-version X.Y.Z]
 
 Builds (or rebuilds) the local '${IMAGE}' image: Node + git + gh + jq + pnpm + Claude Code.
 Re-run it to pick up a new Claude Code release.
@@ -47,7 +47,7 @@ export async function build(argv) {
     child.on('close', (c) => resolve(c ?? 1));
   });
   if (code !== 0) throw new CliError(`docker build failed (exit ${code}).`);
-  // Record the exact image ID: launches refuse a 'claude-pod' tag that points anywhere else.
+  // Record the exact image ID: launches refuse a 'airlock' tag that points anywhere else.
   ensurePrivateDir(hostDir());
   writeFileAtomic(imageIdPath(), `${imageId()}\n`);
   ok(`Image '${IMAGE}' built`);
@@ -56,8 +56,8 @@ export async function build(argv) {
   if (v.status === 0) detail(`claude-code: ${v.stdout.trim()}`);
 
   info('Next steps');
-  process.stderr.write(`  ${bold('claude setup-token')}  on the host, then ${bold('claude-pod auth')} to store the token (once)\n`);
-  process.stderr.write(`  ${bold('claude-pod init')}      add a claude-pod.config.json to a project (optional)\n`);
-  process.stderr.write(`  ${bold('claude-pod')}           shell in the pod for the current project\n`);
+  process.stderr.write(`  ${bold('claude setup-token')}  on the host, then ${bold('airlock auth')} to store the token (once)\n`);
+  process.stderr.write(`  ${bold('airlock init')}      add a airlock.config.json to a project (optional)\n`);
+  process.stderr.write(`  ${bold('airlock')}           shell in the pod for the current project\n`);
   return 0;
 }

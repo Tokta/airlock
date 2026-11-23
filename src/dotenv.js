@@ -1,6 +1,6 @@
 // Minimal .env parser: KEY=VALUE lines, optional `export ` prefix, `#` comments, and single- or
 // double-quoted values. Deliberately no variable expansion or multi-line values — it only needs to
-// read the handful of secrets a claude-pod.config.json interpolates.
+// read the handful of secrets a airlock.config.json interpolates.
 
 export function parseDotenv(text) {
   const vars = {};

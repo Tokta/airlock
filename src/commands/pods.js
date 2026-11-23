@@ -4,11 +4,11 @@ import { docker } from '../docker.js';
 import { LABEL, LABEL_MODE, LABEL_PROJECT } from '../paths.js';
 import { CliError, ok } from '../ui.js';
 
-export const PS_HELP = `Usage: claude-pod ps [--all]
+export const PS_HELP = `Usage: airlock ps [--all]
 
 Lists running pods for the current project (--all: every project).`;
 
-export const STOP_HELP = `Usage: claude-pod stop [NAME...] [--all]
+export const STOP_HELP = `Usage: airlock stop [NAME...] [--all]
 
 Stops pods by name; with no names, every pod of the current project; --all stops every pod.`;
 

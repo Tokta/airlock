@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Entry point for the launchers in ~/.config/claude-pod/shims/: claude-pod-shim.js <tool> [args...]
+// Entry point for the launchers in ~/.config/airlock/shims/: airlock-shim.js <tool> [args...]
 import { shimMain } from '../src/shim.js';
 
 const [tool, ...args] = process.argv.slice(2);

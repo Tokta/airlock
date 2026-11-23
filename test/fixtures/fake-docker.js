@@ -11,6 +11,11 @@ const record = (entry) => log && fs.appendFileSync(log, `${JSON.stringify(entry)
 
 const [cmd, sub] = args;
 if (cmd === 'info' || cmd === 'stop') process.exit(0);
+if (cmd === 'ps' && !args.includes('-a')) {
+  // FAKE_PS: the names of running pods, one per line.
+  process.stdout.write(process.env.FAKE_PS || '');
+  process.exit(0);
+}
 if (cmd === 'image' && sub === 'ls') {
   process.stdout.write(`${process.env.FAKE_IMAGE_ID || 'sha256:fake'}\n`);
   process.exit(0);

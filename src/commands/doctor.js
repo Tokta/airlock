@@ -12,7 +12,7 @@ import { SHIM_TOOLS, shimsDir } from '../shim.js';
 import { kind } from '../safefs.js';
 import { bold, err, info, ok, warn } from '../ui.js';
 
-export const DOCTOR_HELP = `Usage: claude-pod doctor
+export const DOCTOR_HELP = `Usage: airlock doctor
 
 Checks Docker, the image, the login token and the current project's config.`;
 
@@ -41,7 +41,7 @@ export async function doctor(argv) {
   info('Host');
   const major = Number(process.versions.node.split('.')[0]);
   if (major >= 20) ok(`node ${process.versions.node}`);
-  else fail(`node ${process.versions.node} — claude-pod needs Node 20+`);
+  else fail(`node ${process.versions.node} — airlock needs Node 20+`);
 
   let dockerUp = false;
   try {
@@ -54,19 +54,19 @@ export async function doctor(argv) {
   }
   if (dockerUp) {
     const img = imageStatus();
-    if (!img.exists) fail(`image '${IMAGE}' not built — run ${bold('claude-pod build')}`);
-    else if (img.replaced) fail(`image '${IMAGE}' is not the one claude-pod built — run ${bold('claude-pod build')}`);
-    else if (!img.recorded) warn(`image '${IMAGE}' predates this version — run ${bold('claude-pod build')}`);
-    else if (img.stale) warn(`image '${IMAGE}' was built from a different Dockerfile — run ${bold('claude-pod build')}`);
+    if (!img.exists) fail(`image '${IMAGE}' not built — run ${bold('airlock build')}`);
+    else if (img.replaced) fail(`image '${IMAGE}' is not the one airlock built — run ${bold('airlock build')}`);
+    else if (!img.recorded) warn(`image '${IMAGE}' predates this version — run ${bold('airlock build')}`);
+    else if (img.stale) warn(`image '${IMAGE}' was built from a different Dockerfile — run ${bold('airlock build')}`);
     else ok(`image '${IMAGE}' up to date`);
   }
 
   info('Login');
   if (readToken()) ok(`token stored in ${tokenPath()}`);
-  else fail(`no login token — run ${bold('claude setup-token')} on the host, then ${bold('claude-pod auth')}`);
+  else fail(`no login token — run ${bold('claude setup-token')} on the host, then ${bold('airlock auth')}`);
   if (kind(hostDir()) === 'dir') ok(`${hostDir()} (host-only, never mounted)`);
   const legacy = path.join(stateRoot(), '.credentials.json');
-  if (kind(legacy) !== 'missing') warn(`${legacy} is an old copied login (with a refresh token) that is no longer used — delete it, or run ${bold('claude-pod auth')}`);
+  if (kind(legacy) !== 'missing') warn(`${legacy} is an old copied login (with a refresh token) that is no longer used — delete it, or run ${bold('airlock auth')}`);
   for (const old of ['projects', 'settings.json', '.claude.json']) {
     if (kind(path.join(stateRoot(), old)) !== 'missing') {
       warn(`${path.join(stateRoot(), old)} is state from the old shared layout (pods now use ${path.join(stateRoot(), 'pods')}/<project>); delete it when you no longer need the history`);
@@ -76,7 +76,7 @@ export async function doctor(argv) {
 
   if (dockerUp) {
     for (const rec of listOrphans(containerExists)) {
-      warn(`an interrupted run in ${rec.root} may have left files to quarantine (${rec.missing.join(', ')}); the next claude-pod launch there sweeps them`);
+      warn(`an interrupted run in ${rec.root} may have left files to quarantine (${rec.missing.join(', ')}); the next airlock launch there sweeps them`);
     }
   }
 
@@ -99,11 +99,11 @@ export async function doctor(argv) {
     ok(`root: ${found.root}`);
     ok(`pod state: ${projectStateDir(found.root)}`);
     const config = loadConfig(found);
-    if (!found.configPath) ok('no claude-pod.config.json (defaults: default network, no ports, no extra env)');
+    if (!found.configPath) ok('no airlock.config.json (defaults: default network, no ports, no extra env)');
     else {
       ok(`config: ${found.configPath}`);
       if (isTrusted(found.root, config.hash)) ok('config trusted');
-      else fail(`config is new or changed since you approved it — review it, then ${bold('claude-pod trust')}`);
+      else fail(`config is new or changed since you approved it — review it, then ${bold('airlock trust')}`);
       if (config.network && config.network !== 'none' && dockerUp) {
         const res = docker(['network', 'inspect', '--format', '{{.Driver}}', config.network]);
         if (res.status !== 0) fail(`network ${config.network} not found — start your stack (docker compose up -d)`);
@@ -117,7 +117,7 @@ export async function doctor(argv) {
       if (Object.keys(config.env).length) ok(`env: ${Object.keys(config.env).join(', ')}`);
       if (config.shims) {
         ok(`shims: on${config.shims.host.length ? `; on the host: ${config.shims.host.join(', ')}` : ''}`);
-        if (kind(shimsDir()) !== 'dir') warn(`shims: not installed — run ${bold('claude-pod shims')}`);
+        if (kind(shimsDir()) !== 'dir') warn(`shims: not installed — run ${bold('airlock shims')}`);
         // A host script is defined in package.json, which a pod could otherwise rewrite.
         if (config.shims.host.length && !config.readOnly.some((p) => p.toLowerCase() === 'package.json')) {
           warn('shims.host scripts are refused until "package.json" is in "readOnly" (add the files they call too)');
@@ -130,7 +130,7 @@ export async function doctor(argv) {
           for (const name of config.secrets) {
             try {
               if (hasSecret(found.root, name)) ok(`secret ${name}: stored (shell and exec pods only)`);
-              else warn(`secret ${name}: missing — run ${bold(`claude-pod secret set ${name}`)}`);
+              else warn(`secret ${name}: missing — run ${bold(`airlock secret set ${name}`)}`);
             } catch (e) {
               fail(`secret ${name}: ${e.message}`);
             }
