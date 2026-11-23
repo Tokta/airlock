@@ -38,7 +38,7 @@ it and, with the network open, send it out.
 ### Lock the directory `core.hooksPath` points at
 
 `.git/config` is read-only, so a pod cannot change `core.hooksPath`. But when a project sets it
-to a folder inside the repo (ops-olive uses `.githooks`), that folder is ordinary project files.
+to a folder inside the repo (`.githooks`, say), that folder is ordinary project files.
 The pod can rewrite `.githooks/pre-commit`, and the host runs it on the next commit.
 
 - In `protectedMounts()` ([src/protect.js](../src/protect.js)), read `core.hooksPath` with
