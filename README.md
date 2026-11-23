@@ -35,7 +35,7 @@ claude-pod run --model opus --prompt-file /tmp/task.md --out /tmp/task   # headl
 
 `claude-pod run` is what an orchestrator calls to hand a task to a sandboxed agent: the prompt goes in on stdin, and the result lands in `/tmp/task.out`, `.err` and `.exit`. Run `claude-pod guide` for a briefing you can give an agent, or `claude-pod --help` for every command.
 
-To wire it into an orchestrator (permissions, Docker network, ports, env), see **[INTEGRATION.md](INTEGRATION.md)**.
+To wire it into an orchestrator (permissions, Docker network, ports, env), see **[INTEGRATION.md](INTEGRATION.md)**. To run your own dev loop (`pnpm install`, `pnpm dev`, tests) in pods too, see [Run the whole dev loop in a pod](INTEGRATION.md#5-run-the-whole-dev-loop-in-a-pod).
 
 ## What it does and doesn't protect
 

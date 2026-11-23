@@ -157,6 +157,101 @@ the `CLAUDE_POD` marker:
 
 ---
 
+## 5. Run the whole dev loop in a pod
+
+Steps 1–4 sandbox the agents. The dev loop itself (`pnpm install`, `pnpm dev`, tests, builds)
+still runs on your host, where a malicious package can read `~/.ssh`, cloud keys and every other
+project. In a project that opts in, package commands run in a pod instead, whether you typed them
+or the host Claude session did.
+
+**The config.** Everything below in one place:
+
+```json
+{
+  "network": "my-app_default",
+  "ports": [{ "port": 3000, "fixed": true }],
+  "envFile": ".env",
+  "env": {
+    "HOST": "0.0.0.0",
+    "DATABASE_URL": "postgresql://app:${POSTGRES_PASSWORD}@postgres:5432/app"
+  },
+  "secrets": ["RESEND_API_KEY", "STRIPE_SECRET_KEY"],
+  "readOnly": ["package.json", "pnpm-lock.yaml", "scripts", "docker-compose.yml"],
+  "shims": { "host": ["dev"] }
+}
+```
+
+- **`ports`**: the dev server keeps its real port, so OAuth callbacks and cookies still work.
+  `exec` refuses to start while 3000 is busy, rather than moving it.
+- **`secrets`**: API keys come from the macOS keychain, not from `.env` (below).
+- **`readOnly`**: the files your host runs. The `dev` script runs on the host, so `package.json`
+  (where it's defined; claude-pod refuses host scripts without it), the lockfile, the compose file
+  and the scripts it calls must not be writable by a pod.
+- **`shims`**: `pnpm`, `npm`, `node` & co. typed on the host go to a pod, except `pnpm dev`.
+
+Approve it with `claude-pod trust`.
+
+**Move the keys out of `.env`.** For each real secret in `.env`:
+
+```bash
+claude-pod secret set RESEND_API_KEY     # hidden input; or: claude-pod secret set RESEND_API_KEY < file
+```
+
+then delete it from `.env` and add its name to `"secrets"`. `claude-pod secret list` shows what's
+stored, and `claude-pod doctor` shows which configured secrets are missing. Keys reach pods you
+start with `claude-pod shell` or `claude-pod exec` only: never `claude` or `run` pods, and never
+the pods the shims start (every `pnpm install` would hand them to postinstall scripts).
+Local-only values, like the compose database password above, can stay in `.env`.
+
+**Put the shims first on `PATH`.** Once per machine:
+
+```bash
+claude-pod shims
+```
+
+It prints the line for your `~/.zshrc` or `~/.bashrc`:
+
+```bash
+export PATH="$HOME/.config/claude-pod/shims:$PATH"
+```
+
+Open a new terminal (and restart the host Claude session, which uses the same `PATH`), then check
+with `claude-pod doctor`. Now `pnpm install` and `pnpm test` in this project run as
+`claude-pod exec --no-ports …`, about half a second slower each. `node src/seed.js` goes to a pod
+too; `node scripts/check.js` runs on the host, since `scripts` is read-only, and so do global CLIs
+and claude-pod itself. Other projects are untouched.
+
+**A dev script that brings up compose on the host, then the app in a pod.** `docker compose` needs
+the host's Docker, so the `dev` script stays on the host (it's in `shims.host`) and runs only the
+app in a pod:
+
+```json
+{ "scripts": { "dev": "./scripts/dev.sh" } }
+```
+
+```bash
+#!/bin/sh
+# scripts/dev.sh: runs on the host (shims.host), so it runs no package code itself.
+set -e
+docker compose up -d --wait
+exec claude-pod exec pnpm exec next dev -H 0.0.0.0 -p 3000
+```
+
+`pnpm dev` doesn't use your host pnpm: claude-pod reads the `dev` script from `package.json` and
+runs it with `/bin/sh` in the project root. It starts the database on the host and the app in a
+pod on `http://127.0.0.1:3000`, with the project's secrets (that `claude-pod exec` is explicit).
+Run `pnpm test` beside it in another terminal: it goes through `exec --no-ports`, so it doesn't
+fight over 3000. Tests that need a secret: `claude-pod exec --no-ports pnpm test`.
+
+What this doesn't cover: a command run by its full path (`/usr/local/bin/node`), tools the shims
+don't know, a global CLI and the project files it loads (`eslint` reading `eslint.config.js`), and
+whatever a `shims.host` script runs. An agent pod can still change the code a later `exec` runs
+with the secrets loaded, so review the diff after an agent run, and after one you don't trust,
+delete `node_modules` and the project's package cache before reinstalling. See
+[Secrets](docs/REFERENCE.md#secrets) and [Host shims](docs/REFERENCE.md#host-shims).
+
+---
+
 ## After an unattended run
 
 The pod has **no git or GitHub credentials** by design. Let the agent commit locally (the project

@@ -227,7 +227,11 @@ session (which uses the same `PATH`):
   - a host script → real binary;
   - anything else → `exec --no-ports`.
 
-## Docs
+## [DONE] Docs
+
+**As built:** INTEGRATION.md section 5 "Run the whole dev loop in a pod" and a README pointer to it. REFERENCE got its
+"Host shims" section and the "still exposed" rows with Batch 6. "Everything else in the project" stays, limited to what
+isn't under `readOnly`.
 
 INTEGRATION.md gets a section "Run the whole dev loop in a pod". It covers:
 
